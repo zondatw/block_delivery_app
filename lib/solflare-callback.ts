@@ -77,7 +77,8 @@ export const handleSolflareCallbackUrl = (url: string) => {
 
   if (typeof query.errorCode === 'string') {
     const message = typeof query.errorMessage === 'string' ? query.errorMessage : 'Unknown error';
-    state = { ...state, error: `${query.errorCode}: ${message}` };
+    const isRejected = query.errorCode === 'userRejectedRequest';
+    state = { ...state, error: isRejected ? 'Request cancelled in Solflare.' : `${query.errorCode}: ${message}` };
     emit();
     return;
   }

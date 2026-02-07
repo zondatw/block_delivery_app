@@ -19,6 +19,7 @@ import {
 
 const DAPP_URL = process.env.EXPO_PUBLIC_DAPP_URL ?? 'https://example.com';
 const CLUSTER = process.env.EXPO_PUBLIC_SOLANA_CHAIN ?? 'devnet';
+const SOLANA_RPC_URL = process.env.EXPO_PUBLIC_SOLANA_RPC_URL ?? 'https://api.devnet.solana.com';
 const REDIRECT_LINK = Linking.createURL('solflare-connect', { scheme: 'blockdeliveryapp' });
 
 const shorten = (value: string) => `${value.slice(0, 4)}...${value.slice(-4)}`;
@@ -31,11 +32,58 @@ export default function WalletScreen() {
   const [webWallet, setWebWallet] = useState<any>(null);
   const [webReady, setWebReady] = useState(false);
   const keypairRef = useRef<nacl.BoxKeyPair | null>(null);
+  const [balance, setBalance] = useState<number | null>(null);
+  const [balanceError, setBalanceError] = useState<string | null>(null);
 
   useEffect(() => {
     setState(getSolflareState());
     return subscribeSolflareState((next) => setState(next));
   }, []);
+
+  useEffect(() => {
+    const publicKey = state.publicKey;
+    if (!publicKey) {
+      setBalance(null);
+      setBalanceError(null);
+      return;
+    }
+
+    let active = true;
+
+    const loadBalance = async () => {
+      setBalanceError(null);
+      try {
+        const response = await fetch(SOLANA_RPC_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getBalance',
+            params: [publicKey],
+          }),
+        });
+        const data = await response.json();
+        const lamports = data?.result?.value;
+        if (typeof lamports !== 'number') {
+          throw new Error('Invalid balance response');
+        }
+        if (active) {
+          setBalance(lamports / 1_000_000_000);
+        }
+      } catch (err) {
+        if (active) {
+          setBalanceError('Unable to fetch balance.');
+        }
+      }
+    };
+
+    loadBalance();
+
+    return () => {
+      active = false;
+    };
+  }, [state.publicKey]);
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -185,6 +233,11 @@ export default function WalletScreen() {
         </ThemedText>
         <ThemedText style={styles.cardText}>{statusText}</ThemedText>
         <ThemedText style={styles.cardText}>Network: Solana {CLUSTER}</ThemedText>
+        <ThemedText style={styles.cardText}>
+          Balance:{' '}
+          {balance === null ? '—' : `${balance.toFixed(4)} SOL`}
+        </ThemedText>
+        {balanceError ? <ThemedText style={styles.cardText}>{balanceError}</ThemedText> : null}
         {Platform.OS === 'web' && !webReady ? (
           <ThemedText style={styles.cardText}>Loading Solflare SDK...</ThemedText>
         ) : null}
