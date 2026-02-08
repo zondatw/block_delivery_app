@@ -6,6 +6,8 @@ import nacl from 'tweetnacl';
 type SolflareState = {
   publicKey: string | null;
   session: string | null;
+  solflareEncryptionPublicKey: string | null;
+  signature: string | null;
   lastUrl: string | null;
   error: string | null;
 };
@@ -15,6 +17,8 @@ type SolflareListener = (next: SolflareState) => void;
 const initialState: SolflareState = {
   publicKey: null,
   session: null,
+  solflareEncryptionPublicKey: null,
+  signature: null,
   lastUrl: null,
   error: null,
 };
@@ -66,6 +70,7 @@ const decryptPayload = (encryptedPayload: string, nonce: string, solflarePubkey:
   return JSON.parse(Buffer.from(decrypted).toString('utf8')) as {
     public_key?: string;
     session?: string;
+    signature?: string;
   };
 };
 
@@ -102,6 +107,8 @@ export const handleSolflareCallbackUrl = (url: string) => {
       ...state,
       publicKey: payload.public_key ?? state.publicKey,
       session: payload.session ?? state.session,
+      signature: payload.signature ?? state.signature,
+      solflareEncryptionPublicKey: solflarePubkey,
       error: null,
     };
   } catch (err) {

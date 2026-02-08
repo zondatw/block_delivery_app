@@ -1,0 +1,458 @@
+{
+  "address": "AdScDF7jTLCmb3iP4ZPugb6kxDtix1U7pVRu99VDJwdy",
+  "metadata": {
+    "name": "block_delivery",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "accept_order",
+      "discriminator": [
+        118,
+        157,
+        62,
+        39,
+        239,
+        234,
+        231,
+        193
+      ],
+      "accounts": [
+        {
+          "name": "order",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "order.order_id",
+                "account": "Order"
+              }
+            ]
+          }
+        },
+        {
+          "name": "courier",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "complete_order",
+      "discriminator": [
+        73,
+        78,
+        89,
+        7,
+        140,
+        132,
+        17,
+        97
+      ],
+      "accounts": [
+        {
+          "name": "order",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "order.order_id",
+                "account": "Order"
+              }
+            ]
+          }
+        },
+        {
+          "name": "courier",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_order",
+      "discriminator": [
+        141,
+        54,
+        37,
+        207,
+        237,
+        210,
+        250,
+        215
+      ],
+      "accounts": [
+        {
+          "name": "counter",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "order",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "counter.next_id",
+                "account": "OrderCounter"
+              }
+            ]
+          }
+        },
+        {
+          "name": "customer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "initialize",
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "counter",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Order",
+      "discriminator": [
+        134,
+        173,
+        223,
+        185,
+        77,
+        86,
+        28,
+        51
+      ]
+    },
+    {
+      "name": "OrderCounter",
+      "discriminator": [
+        124,
+        210,
+        2,
+        119,
+        178,
+        200,
+        59,
+        95
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "OrderAccepted",
+      "discriminator": [
+        221,
+        229,
+        40,
+        47,
+        184,
+        34,
+        195,
+        162
+      ]
+    },
+    {
+      "name": "OrderCompleted",
+      "discriminator": [
+        90,
+        77,
+        52,
+        248,
+        56,
+        233,
+        110,
+        197
+      ]
+    },
+    {
+      "name": "OrderCreated",
+      "discriminator": [
+        224,
+        1,
+        229,
+        63,
+        254,
+        60,
+        190,
+        159
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "OrderNotOpen",
+      "msg": "Order is not open"
+    },
+    {
+      "code": 6001,
+      "name": "AlreadyAccepted",
+      "msg": "Order already accepted"
+    },
+    {
+      "code": 6002,
+      "name": "CannotAcceptOwnOrder",
+      "msg": "Customer cannot accept own order"
+    },
+    {
+      "code": 6003,
+      "name": "OrderNotAccepted",
+      "msg": "Order is not accepted yet"
+    },
+    {
+      "code": 6004,
+      "name": "UnauthorizedCourier",
+      "msg": "Only the assigned courier can complete this order"
+    }
+  ],
+  "types": [
+    {
+      "name": "Order",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "customer",
+            "type": "pubkey"
+          },
+          {
+            "name": "order_id",
+            "type": "u64"
+          },
+          {
+            "name": "courier",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "OrderStatus"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrderAccepted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "order",
+            "type": "pubkey"
+          },
+          {
+            "name": "courier",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrderCompleted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "order",
+            "type": "pubkey"
+          },
+          {
+            "name": "order_id",
+            "type": "u64"
+          },
+          {
+            "name": "courier",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrderCounter",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "next_id",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrderCreated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "order",
+            "type": "pubkey"
+          },
+          {
+            "name": "order_id",
+            "type": "u64"
+          },
+          {
+            "name": "customer",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrderStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Created"
+          },
+          {
+            "name": "Accepted"
+          },
+          {
+            "name": "Delivered"
+          }
+        ]
+      }
+    }
+  ]
+}

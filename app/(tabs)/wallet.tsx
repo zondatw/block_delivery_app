@@ -1,14 +1,26 @@
 import 'react-native-get-random-values';
 import * as Linking from 'expo-linking';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 import bs58 from 'bs58';
 import nacl from 'tweetnacl';
+import { AnchorProvider, BN, EventParser, Program } from '@coral-xyz/anchor';
+import type { Idl } from '@coral-xyz/anchor';
+import { Connection, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import idlJson from '@/assets/idl/block_delivery.json';
 import {
   getSolflareState,
   handleSolflareCallbackUrl,
@@ -18,11 +30,13 @@ import {
 } from '@/lib/solflare-callback';
 
 const DAPP_URL = process.env.EXPO_PUBLIC_DAPP_URL ?? 'https://example.com';
-const CLUSTER = process.env.EXPO_PUBLIC_SOLANA_CHAIN ?? 'devnet';
-const SOLANA_RPC_URL = process.env.EXPO_PUBLIC_SOLANA_RPC_URL ?? 'https://api.devnet.solana.com';
+const CLUSTER = process.env.EXPO_PUBLIC_SOLANA_CHAIN ?? 'localnet';
+const SOLANA_RPC_URL = process.env.EXPO_PUBLIC_SOLANA_RPC_URL ?? 'http://127.0.0.1:8899';
 const REDIRECT_LINK = Linking.createURL('solflare-connect', { scheme: 'blockdeliveryapp' });
+const IDL = idlJson as Idl;
 
 const shorten = (value: string) => `${value.slice(0, 4)}...${value.slice(-4)}`;
+const toSol = (lamports: number) => lamports / 1_000_000_000;
 
 export default function WalletScreen() {
   const colorScheme = useColorScheme();
@@ -34,11 +48,56 @@ export default function WalletScreen() {
   const keypairRef = useRef<nacl.BoxKeyPair | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
   const [balanceError, setBalanceError] = useState<string | null>(null);
+  const [amount, setAmount] = useState('1000');
+  const [events, setEvents] = useState<any[]>([]);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createTx, setCreateTx] = useState<string | null>(null);
+  const [lastOrderId, setLastOrderId] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
     setState(getSolflareState());
     return subscribeSolflareState((next) => setState(next));
   }, []);
+
+  useEffect(() => {
+    if (state.signature) {
+      setCreateTx(state.signature);
+    }
+  }, [state.signature]);
+
+  const programId = useMemo(() => {
+    const address = (IDL as any)?.metadata?.address ?? (IDL as any)?.address ?? null;
+    if (!address) {
+      return null;
+    }
+    try {
+      return new PublicKey(address);
+    } catch (err) {
+      return null;
+    }
+  }, []);
+
+  const connection = useMemo(() => new Connection(SOLANA_RPC_URL, 'confirmed'), []);
+
+  const provider = useMemo(() => {
+    if (!state.publicKey || !programId) return null;
+    const publicKey = new PublicKey(state.publicKey);
+    return new AnchorProvider(
+      connection,
+      {
+        publicKey,
+        signTransaction: async (tx: Transaction) => tx,
+        signAllTransactions: async (txs: Transaction[]) => txs,
+      } as any,
+      { commitment: 'confirmed' },
+    );
+  }, [connection, state.publicKey, programId]);
+
+  const program = useMemo(() => {
+    if (!provider || !programId) return null;
+    return new Program(IDL, provider);
+  }, [provider, programId]);
 
   useEffect(() => {
     const publicKey = state.publicKey;
@@ -69,7 +128,7 @@ export default function WalletScreen() {
           throw new Error('Invalid balance response');
         }
         if (active) {
-          setBalance(lamports / 1_000_000_000);
+          setBalance(toSol(lamports));
         }
       } catch (err) {
         if (active) {
@@ -144,8 +203,55 @@ export default function WalletScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!program || !programId) {
+      return;
+    }
+
+    const parser = new EventParser(programId, program.coder);
+    const subId = connection.onLogs(
+      programId,
+      (logs) => {
+        if (!logs.logs) return;
+        for (const event of parser.parseLogs(logs.logs)) {
+          setEvents((prev) => [...prev, event]);
+        }
+      },
+      'confirmed',
+    );
+
+    return () => {
+      connection.removeOnLogsListener(subId).catch(() => {});
+    };
+  }, [connection, program, programId]);
+
+  const encryptPayload = (payload: object) => {
+    if (!keypairRef.current) {
+      throw new Error('Missing dapp keypair');
+    }
+    if (!state.solflareEncryptionPublicKey) {
+      throw new Error('Missing Solflare encryption key');
+    }
+    const sharedSecret = nacl.box.before(
+      bs58.decode(state.solflareEncryptionPublicKey),
+      keypairRef.current.secretKey,
+    );
+    const nonce = nacl.randomBytes(nacl.box.nonceLength);
+    const encrypted = nacl.box.after(
+      Buffer.from(JSON.stringify(payload)),
+      nonce,
+      sharedSecret,
+    );
+    return {
+      data: bs58.encode(encrypted),
+      nonce: bs58.encode(nonce),
+      dappPublicKey: bs58.encode(keypairRef.current.publicKey),
+    };
+  };
+
   const connect = async () => {
     setState((prev) => ({ ...prev, error: null }));
+    setCreateError(null);
 
     if (Platform.OS === 'web') {
       if (!webWallet) {
@@ -208,6 +314,105 @@ export default function WalletScreen() {
     resetSolflareState();
   };
 
+  const deriveOrderPda = async () => {
+    if (!program || !programId || !state.publicKey) {
+      throw new Error('Wallet or program not ready');
+    }
+    const [counterPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('order_counter')],
+      programId,
+    );
+    const counterAccount: any = await program.account.orderCounter.fetch(counterPda);
+    const orderIdBN = counterAccount.nextId;
+
+    const [orderPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('order'), new BN(orderIdBN).toArrayLike(Buffer, 'le', 8)],
+      programId,
+    );
+
+    return { orderPda, orderIdBN, counterPda };
+  };
+
+  const createOrder = async () => {
+    if (!program || !programId || !state.publicKey) {
+      setCreateError('Wallet or program not ready.');
+      return;
+    }
+    if (!amount || Number.isNaN(Number(amount))) {
+      setCreateError('Enter a valid amount.');
+      return;
+    }
+    if (!programId) {
+      setCreateError('Program ID missing. Update the IDL file.');
+      return;
+    }
+
+    setCreateError(null);
+    setIsCreating(true);
+    setCreateTx(null);
+
+    try {
+      const { orderPda, orderIdBN, counterPda } = await deriveOrderPda();
+      const amountBN = new BN(amount);
+      const tx = await program.methods
+        .createOrder(amountBN)
+        .accounts({
+          counter: counterPda,
+          order: orderPda,
+          customer: new PublicKey(state.publicKey),
+          systemProgram: SystemProgram.programId,
+        })
+        .transaction();
+
+      const latest = await connection.getLatestBlockhash('confirmed');
+      tx.feePayer = new PublicKey(state.publicKey);
+      tx.recentBlockhash = latest.blockhash;
+
+      if (Platform.OS === 'web') {
+        if (!webWallet) {
+          throw new Error('Solflare wallet not ready.');
+        }
+        if (typeof webWallet.signTransaction !== 'function') {
+          throw new Error('Solflare SDK missing signTransaction; cannot use localnet.');
+        }
+        const signed = await webWallet.signTransaction(tx);
+        const raw = signed.serialize();
+        const signature = await connection.sendRawTransaction(raw, { skipPreflight: false });
+        await connection.confirmTransaction(signature, 'confirmed');
+        setCreateTx(signature);
+      } else {
+        if (!state.session) {
+          throw new Error('Missing Solflare session. Reconnect wallet.');
+        }
+        const { data, nonce, dappPublicKey } = encryptPayload({
+          session: state.session,
+          transaction: tx.serialize({
+            requireAllSignatures: false,
+            verifySignatures: false,
+          }).toString('base64'),
+        });
+        const params = new URLSearchParams({
+          app_url: DAPP_URL,
+          dapp_encryption_public_key: dappPublicKey,
+          redirect_link: REDIRECT_LINK,
+          cluster: CLUSTER,
+          nonce,
+          data,
+        });
+        const url = `https://solflare.com/ul/v1/signAndSendTransaction?${params.toString()}`;
+        await Linking.openURL(url);
+      }
+
+      setCreateTx((prev) => prev ?? state.signature ?? null);
+      setLastOrderId(orderIdBN.toString());
+      setEvents([]);
+    } catch (err) {
+      setCreateError(err instanceof Error ? `Create failed: ${err.message}` : 'createOrder failed.');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
   const statusText = useMemo(() => {
     if (state.error) return `Error: ${state.error}`;
     if (state.publicKey) return `Wallet: ${shorten(state.publicKey)}`;
@@ -244,6 +449,14 @@ export default function WalletScreen() {
         {state.lastUrl ? (
           <ThemedText style={styles.cardText}>Last URL: {state.lastUrl}</ThemedText>
         ) : null}
+        {state.signature ? (
+          <ThemedText style={styles.cardText}>Last Signature: {state.signature}</ThemedText>
+        ) : null}
+        {CLUSTER === 'localnet' ? (
+          <ThemedText style={styles.cardText}>
+            Note: Solflare may not support localnet signing.
+          </ThemedText>
+        ) : null}
       </View>
 
       {isConnected ? (
@@ -277,6 +490,62 @@ export default function WalletScreen() {
           Update EXPO_PUBLIC_DAPP_URL to your production site URL.
         </ThemedText>
       ) : null}
+
+      <View style={styles.card}>
+        <ThemedText type="defaultSemiBold">Customer Order</ThemedText>
+        {!programId ? (
+          <ThemedText style={styles.cardText}>
+            Program ID missing. Replace `assets/idl/block_delivery.json` with your IDL.
+          </ThemedText>
+        ) : null}
+        <View style={styles.inputRow}>
+          <ThemedText style={styles.cardText}>Amount</ThemedText>
+          <TextInput
+            style={[styles.input, { color: palette.text, borderColor: palette.icon }]}
+            value={amount}
+            onChangeText={setAmount}
+            keyboardType="numeric"
+            placeholder="Amount"
+            placeholderTextColor={palette.icon}
+          />
+        </View>
+        <Pressable
+          style={({ pressed }) => [
+            styles.connectButton,
+            pressed && styles.buttonPressed,
+            isCreating && styles.buttonDisabled,
+          ]}
+          onPress={createOrder}
+          disabled={isCreating || !isConnected || !programId}>
+          {isCreating ? (
+            <ActivityIndicator color={Colors.light.background} />
+          ) : (
+            <ThemedText style={styles.buttonText}>Create Order</ThemedText>
+          )}
+        </Pressable>
+        {createTx ? (
+          <ThemedText style={styles.cardText}>Tx: {createTx}</ThemedText>
+        ) : null}
+        {lastOrderId ? (
+          <ThemedText style={styles.cardText}>Order ID: {lastOrderId}</ThemedText>
+        ) : null}
+        {createError ? <ThemedText style={styles.cardText}>{createError}</ThemedText> : null}
+      </View>
+
+      <View style={styles.card}>
+        <ThemedText type="defaultSemiBold">Events</ThemedText>
+        {events.length === 0 ? (
+          <ThemedText style={styles.cardText}>No events yet.</ThemedText>
+        ) : (
+          <ScrollView style={styles.events} nestedScrollEnabled>
+            {events.map((event, index) => (
+              <ThemedText key={`${index}`} style={styles.eventItem}>
+                {JSON.stringify(event, null, 2)}
+              </ThemedText>
+            ))}
+          </ScrollView>
+        )}
+      </View>
     </ThemedView>
   );
 }
@@ -305,6 +574,15 @@ const styles = StyleSheet.create({
   cardText: {
     opacity: 0.85,
   },
+  inputRow: {
+    gap: 8,
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
   connectButton: {
     marginTop: 8,
     alignItems: 'center',
@@ -324,9 +602,23 @@ const styles = StyleSheet.create({
   buttonPressed: {
     opacity: 0.85,
   },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
   buttonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+  events: {
+    maxHeight: 200,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(120, 120, 120, 0.25)',
+    padding: 8,
+  },
+  eventItem: {
+    fontSize: 12,
+    marginBottom: 8,
   },
 });
