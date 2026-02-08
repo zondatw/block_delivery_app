@@ -48,6 +48,10 @@ export default function WalletScreen() {
   const keypairRef = useRef<nacl.BoxKeyPair | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
   const [balanceError, setBalanceError] = useState<string | null>(null);
+  const [rpcHealth, setRpcHealth] = useState<'unknown' | 'ok' | 'error'>('unknown');
+  const [rpcMessage, setRpcMessage] = useState<string | null>(null);
+  const [rpcRaw, setRpcRaw] = useState<string | null>(null);
+  const [isCheckingRpc, setIsCheckingRpc] = useState(false);
   const [amount, setAmount] = useState('1000');
   const [events, setEvents] = useState<any[]>([]);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -65,6 +69,38 @@ export default function WalletScreen() {
       setCreateTx(state.signature);
     }
   }, [state.signature]);
+
+  const checkRpcHealth = async () => {
+    setIsCheckingRpc(true);
+    setRpcMessage(null);
+    setRpcRaw(null);
+    try {
+      const response = await fetch(SOLANA_RPC_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getHealth',
+        }),
+      });
+      const data = await response.json();
+      if (data?.result === 'ok') {
+        setRpcHealth('ok');
+        setRpcMessage('RPC OK');
+      } else {
+        setRpcHealth('error');
+        setRpcMessage('RPC unhealthy');
+      }
+      setRpcRaw(JSON.stringify(data));
+    } catch (err) {
+      setRpcHealth('error');
+      setRpcMessage('RPC unreachable');
+      setRpcRaw(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setIsCheckingRpc(false);
+    }
+  };
 
   const programId = useMemo(() => {
     const address = (IDL as any)?.metadata?.address ?? (IDL as any)?.address ?? null;
@@ -457,6 +493,26 @@ export default function WalletScreen() {
             Note: Solflare may not support localnet signing.
           </ThemedText>
         ) : null}
+        <Pressable
+          style={({ pressed }) => [
+            styles.rpcButton,
+            pressed && styles.buttonPressed,
+            isCheckingRpc && styles.buttonDisabled,
+          ]}
+          onPress={checkRpcHealth}
+          disabled={isCheckingRpc}>
+          {isCheckingRpc ? (
+            <ActivityIndicator color={Colors.light.background} />
+          ) : (
+            <ThemedText style={styles.buttonText}>Check RPC Health</ThemedText>
+          )}
+        </Pressable>
+        <ThemedText style={styles.cardText}>
+          RPC Status:{' '}
+          {rpcHealth === 'unknown' ? 'Unknown' : rpcHealth === 'ok' ? 'OK' : 'Error'}
+        </ThemedText>
+        {rpcMessage ? <ThemedText style={styles.cardText}>{rpcMessage}</ThemedText> : null}
+        {rpcRaw ? <ThemedText style={styles.cardText}>RPC Response: {rpcRaw}</ThemedText> : null}
       </View>
 
       {isConnected ? (
@@ -590,6 +646,14 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 999,
     backgroundColor: '#FF7A00',
+  },
+  rpcButton: {
+    marginTop: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#2B5C9A',
   },
   disconnectButton: {
     marginTop: 8,
