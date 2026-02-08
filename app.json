@@ -25,6 +25,19 @@
             "BROWSABLE",
             "DEFAULT"
           ]
+        },
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "blockdeliveryapp",
+              "host": "phantom-connect"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ],
       "adaptiveIcon": {

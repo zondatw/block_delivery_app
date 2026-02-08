@@ -15,6 +15,7 @@ import nacl from 'tweetnacl';
 import { AnchorProvider, BN, EventParser, Program } from '@coral-xyz/anchor';
 import type { Idl } from '@coral-xyz/anchor';
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import { Buffer } from 'buffer';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -29,11 +30,19 @@ import {
   setSolflareKeypair,
   subscribeSolflareState,
 } from '@/lib/solflare-callback';
+import {
+  getPhantomState,
+  handlePhantomCallbackUrl,
+  resetPhantomState,
+  setPhantomKeypair,
+  subscribePhantomState,
+} from '@/lib/phantom-callback';
 
 const DAPP_URL = process.env.EXPO_PUBLIC_DAPP_URL ?? 'https://example.com';
 const CLUSTER = process.env.EXPO_PUBLIC_SOLANA_CHAIN ?? 'localnet';
 const SOLANA_RPC_URL = process.env.EXPO_PUBLIC_SOLANA_RPC_URL ?? 'http://127.0.0.1:8899';
 const REDIRECT_LINK = Linking.createURL('solflare-connect', { scheme: 'blockdeliveryapp' });
+const PHANTOM_REDIRECT_LINK = Linking.createURL('phantom-connect', { scheme: 'blockdeliveryapp' });
 const IDL = idlJson as Idl;
 
 const shorten = (value: string) => `${value.slice(0, 4)}...${value.slice(-4)}`;
@@ -43,10 +52,15 @@ export default function WalletScreen() {
   const colorScheme = useColorScheme();
   const palette = Colors[colorScheme ?? 'light'];
   const [state, setState] = useState(getSolflareState());
+  const [phantomState, setPhantomState] = useState(getPhantomState());
+  const [activeWallet, setActiveWallet] = useState<'solflare' | 'phantom' | 'local'>('solflare');
   const [isLoading, setIsLoading] = useState(false);
   const [webWallet, setWebWallet] = useState<any>(null);
   const [webReady, setWebReady] = useState(false);
+  const [phantomWebWallet, setPhantomWebWallet] = useState<any>(null);
+  const [phantomWebReady, setPhantomWebReady] = useState(false);
   const keypairRef = useRef<nacl.BoxKeyPair | null>(null);
+  const phantomKeypairRef = useRef<nacl.BoxKeyPair | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
   const [balanceError, setBalanceError] = useState<string | null>(null);
   const [rpcHealth, setRpcHealth] = useState<'unknown' | 'ok' | 'error'>('unknown');
@@ -66,9 +80,24 @@ export default function WalletScreen() {
 
   const localConnection = useMemo(() => new Connection(SOLANA_RPC_URL, 'confirmed'), []);
 
+  const activeWalletPublicKey = useMemo(() => {
+    if (activeWallet === 'local') {
+      return localKeypair?.publicKey.toBase58() ?? null;
+    }
+    if (activeWallet === 'phantom') {
+      return phantomState.publicKey ?? null;
+    }
+    return state.publicKey ?? null;
+  }, [activeWallet, localKeypair, phantomState.publicKey, state.publicKey]);
+
   useEffect(() => {
     setState(getSolflareState());
     return subscribeSolflareState((next) => setState(next));
+  }, []);
+
+  useEffect(() => {
+    setPhantomState(getPhantomState());
+    return subscribePhantomState((next) => setPhantomState(next));
   }, []);
 
   useEffect(() => {
@@ -76,6 +105,12 @@ export default function WalletScreen() {
       setCreateTx(state.signature);
     }
   }, [state.signature]);
+
+  useEffect(() => {
+    if (phantomState.signature) {
+      setCreateTx(phantomState.signature);
+    }
+  }, [phantomState.signature]);
 
   useEffect(() => {
     if (!localKeypair) {
@@ -107,6 +142,7 @@ export default function WalletScreen() {
 
   const createLocalWallet = () => {
     setLocalError(null);
+    setActiveWallet('local');
     setLocalKeypair(Keypair.generate());
   };
 
@@ -147,6 +183,21 @@ export default function WalletScreen() {
       setLocalError('Airdrop failed. Check RPC URL and local validator.');
     } finally {
       setLocalBusy(false);
+    }
+  };
+
+  const confirmSignature = async (signature: string) => {
+    if (Platform.OS !== 'android') {
+      await connection.confirmTransaction(signature, 'confirmed');
+      return;
+    }
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const status = await connection.getSignatureStatuses([signature]);
+      const info = status?.value?.[0];
+      if (info?.confirmationStatus === 'confirmed' || info?.confirmationStatus === 'finalized') {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
   };
 
@@ -197,8 +248,10 @@ export default function WalletScreen() {
   const connection = useMemo(() => new Connection(SOLANA_RPC_URL, 'confirmed'), []);
 
   const provider = useMemo(() => {
-    if (!state.publicKey || !programId) return null;
-    const publicKey = new PublicKey(state.publicKey);
+    if (!programId) return null;
+    const publicKey = activeWalletPublicKey
+      ? new PublicKey(activeWalletPublicKey)
+      : programId;
     return new AnchorProvider(
       connection,
       {
@@ -208,7 +261,7 @@ export default function WalletScreen() {
       } as any,
       { commitment: 'confirmed' },
     );
-  }, [connection, state.publicKey, programId]);
+  }, [connection, activeWalletPublicKey, programId]);
 
   const program = useMemo(() => {
     if (!provider || !programId) return null;
@@ -216,7 +269,13 @@ export default function WalletScreen() {
   }, [provider, programId]);
 
   useEffect(() => {
-    const publicKey = state.publicKey;
+    if (activeWallet === 'local') {
+      setBalance(null);
+      setBalanceError(null);
+      return;
+    }
+
+    const publicKey = activeWalletPublicKey;
     if (!publicKey) {
       setBalance(null);
       setBalanceError(null);
@@ -258,7 +317,7 @@ export default function WalletScreen() {
     return () => {
       active = false;
     };
-  }, [state.publicKey]);
+  }, [activeWallet, activeWalletPublicKey]);
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -267,11 +326,13 @@ export default function WalletScreen() {
 
     const subscription = Linking.addEventListener('url', ({ url }) => {
       handleSolflareCallbackUrl(url);
+      handlePhantomCallbackUrl(url);
     });
 
     Linking.getInitialURL().then((url) => {
       if (url) {
         handleSolflareCallbackUrl(url);
+        handlePhantomCallbackUrl(url);
       }
     });
 
@@ -320,7 +381,24 @@ export default function WalletScreen() {
   }, []);
 
   useEffect(() => {
+    if (Platform.OS !== 'web') {
+      return;
+    }
+
+    const phantom = (globalThis as any)?.solana;
+    if (phantom?.isPhantom) {
+      setPhantomWebWallet(phantom);
+      setPhantomWebReady(true);
+    } else {
+      setPhantomWebReady(false);
+    }
+  }, []);
+
+  useEffect(() => {
     if (!program || !programId) {
+      return;
+    }
+    if (Platform.OS === 'android') {
       return;
     }
 
@@ -341,31 +419,23 @@ export default function WalletScreen() {
     };
   }, [connection, program, programId]);
 
-  const encryptPayload = (payload: object) => {
-    if (!keypairRef.current) {
-      throw new Error('Missing dapp keypair');
-    }
-    if (!state.solflareEncryptionPublicKey) {
-      throw new Error('Missing Solflare encryption key');
-    }
-    const sharedSecret = nacl.box.before(
-      bs58.decode(state.solflareEncryptionPublicKey),
-      keypairRef.current.secretKey,
-    );
+  const encryptPayload = (
+    payload: object,
+    encryptionPublicKey: string,
+    keypair: nacl.BoxKeyPair,
+  ) => {
+    const sharedSecret = nacl.box.before(bs58.decode(encryptionPublicKey), keypair.secretKey);
     const nonce = nacl.randomBytes(nacl.box.nonceLength);
-    const encrypted = nacl.box.after(
-      Buffer.from(JSON.stringify(payload)),
-      nonce,
-      sharedSecret,
-    );
+    const encrypted = nacl.box.after(Buffer.from(JSON.stringify(payload)), nonce, sharedSecret);
     return {
       data: bs58.encode(encrypted),
       nonce: bs58.encode(nonce),
-      dappPublicKey: bs58.encode(keypairRef.current.publicKey),
+      dappPublicKey: bs58.encode(keypair.publicKey),
     };
   };
 
   const connect = async () => {
+    setActiveWallet('solflare');
     setState((prev) => ({ ...prev, error: null }));
     setCreateError(null);
 
@@ -410,6 +480,57 @@ export default function WalletScreen() {
     }
   };
 
+  const connectPhantom = async () => {
+    setActiveWallet('phantom');
+    setPhantomState((prev) => ({ ...prev, error: null }));
+    setCreateError(null);
+
+    if (Platform.OS === 'web') {
+      if (!phantomWebWallet) {
+        setPhantomState((prev) => ({ ...prev, error: 'Phantom wallet not ready.' }));
+        return;
+      }
+      setIsLoading(true);
+      try {
+        const response = await phantomWebWallet.connect();
+        const publicKey =
+          response?.publicKey?.toString?.() ??
+          phantomWebWallet.publicKey?.toString?.() ??
+          null;
+        setPhantomState((prev) => ({ ...prev, publicKey }));
+      } catch (err) {
+        setPhantomState((prev) => ({ ...prev, error: 'Connection cancelled or failed.' }));
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    resetPhantomState();
+    const keypair = nacl.box.keyPair();
+    phantomKeypairRef.current = keypair;
+    setPhantomKeypair(keypair);
+
+    const dappPublicKey = bs58.encode(keypair.publicKey);
+    const params = new URLSearchParams({
+      app_url: DAPP_URL,
+      dapp_encryption_public_key: dappPublicKey,
+      redirect_link: PHANTOM_REDIRECT_LINK,
+      cluster: CLUSTER,
+    });
+
+    const url = `https://phantom.app/ul/v1/connect?${params.toString()}`;
+    setIsLoading(true);
+    try {
+      await Linking.openURL(url);
+    } catch (err) {
+      resetPhantomState();
+      setPhantomState((prev) => ({ ...prev, error: 'Unable to open Phantom.' }));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const disconnect = async () => {
     if (Platform.OS === 'web') {
       if (!webWallet) {
@@ -430,9 +551,29 @@ export default function WalletScreen() {
     resetSolflareState();
   };
 
+  const disconnectPhantom = async () => {
+    if (Platform.OS === 'web') {
+      if (!phantomWebWallet) {
+        return;
+      }
+      setIsLoading(true);
+      try {
+        await phantomWebWallet.disconnect();
+      } catch (err) {
+        setPhantomState((prev) => ({ ...prev, error: 'Disconnect failed.' }));
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    setPhantomKeypair(null);
+    resetPhantomState();
+  };
+
   const deriveOrderPda = async () => {
-    if (!program || !programId || !state.publicKey) {
-      throw new Error('Wallet or program not ready');
+    if (!program || !programId) {
+      throw new Error('Program not ready');
     }
     const [counterPda] = PublicKey.findProgramAddressSync(
       [Buffer.from('order_counter')],
@@ -450,16 +591,22 @@ export default function WalletScreen() {
   };
 
   const createOrder = async () => {
-    if (!program || !programId || !state.publicKey) {
-      setCreateError('Wallet or program not ready.');
+    if (!program || !programId) {
+      setCreateError('Program not ready.');
       return;
     }
     if (!amount || Number.isNaN(Number(amount))) {
       setCreateError('Enter a valid amount.');
       return;
     }
-    if (!programId) {
-      setCreateError('Program ID missing. Update the IDL file.');
+
+    const activeKey = activeWalletPublicKey;
+    if (activeWallet !== 'local' && !activeKey) {
+      setCreateError('Wallet not connected.');
+      return;
+    }
+    if (activeWallet === 'local' && !localKeypair) {
+      setCreateError('Local wallet not created.');
       return;
     }
 
@@ -470,56 +617,123 @@ export default function WalletScreen() {
     try {
       const { orderPda, orderIdBN, counterPda } = await deriveOrderPda();
       const amountBN = new BN(amount);
+      const customerPubkey =
+        activeWallet === 'local' ? localKeypair!.publicKey : new PublicKey(activeKey!);
+
       const tx = await program.methods
         .createOrder(amountBN)
         .accounts({
           counter: counterPda,
           order: orderPda,
-          customer: new PublicKey(state.publicKey),
+          customer: customerPubkey,
           systemProgram: SystemProgram.programId,
         })
         .transaction();
 
       const latest = await connection.getLatestBlockhash('confirmed');
-      tx.feePayer = new PublicKey(state.publicKey);
+      tx.feePayer = customerPubkey;
       tx.recentBlockhash = latest.blockhash;
 
-      if (Platform.OS === 'web') {
-        if (!webWallet) {
-          throw new Error('Solflare wallet not ready.');
+      if (activeWallet === 'local') {
+        tx.sign(localKeypair!);
+        const signature = await connection.sendRawTransaction(tx.serialize(), {
+          skipPreflight: false,
+        });
+        await confirmSignature(signature);
+        setCreateTx(signature);
+      } else if (activeWallet === 'phantom') {
+        if (Platform.OS === 'web') {
+          if (!phantomWebWallet) {
+            throw new Error('Phantom wallet not ready.');
+          }
+          if (typeof phantomWebWallet.signTransaction !== 'function') {
+            throw new Error('Phantom missing signTransaction.');
+          }
+          const signed = await phantomWebWallet.signTransaction(tx);
+          const raw = signed.serialize();
+          const signature = await connection.sendRawTransaction(raw, { skipPreflight: false });
+          await confirmSignature(signature);
+          setCreateTx(signature);
+        } else {
+          if (!phantomState.session || !phantomState.phantomEncryptionPublicKey) {
+            throw new Error('Missing Phantom session. Reconnect wallet.');
+          }
+          if (!phantomKeypairRef.current) {
+            throw new Error('Missing Phantom keypair.');
+          }
+          const { data, nonce, dappPublicKey } = encryptPayload(
+            {
+              session: phantomState.session,
+              transaction: tx.serialize({
+                requireAllSignatures: false,
+                verifySignatures: false,
+              }).toString('base64'),
+            },
+            phantomState.phantomEncryptionPublicKey,
+            phantomKeypairRef.current,
+          );
+          const params = new URLSearchParams({
+            app_url: DAPP_URL,
+            dapp_encryption_public_key: dappPublicKey,
+            redirect_link: PHANTOM_REDIRECT_LINK,
+            cluster: CLUSTER,
+            nonce,
+            data,
+          });
+          const url = `https://phantom.app/ul/v1/signAndSendTransaction?${params.toString()}`;
+          await Linking.openURL(url);
         }
-        if (typeof webWallet.signTransaction !== 'function') {
-          throw new Error('Solflare SDK missing signTransaction; cannot use localnet.');
-        }
-        const signed = await webWallet.signTransaction(tx);
-        const raw = signed.serialize();
-        const signature = await connection.sendRawTransaction(raw, { skipPreflight: false });
-        await connection.confirmTransaction(signature, 'confirmed');
+      } else {
+        if (Platform.OS === 'web') {
+          if (!webWallet) {
+            throw new Error('Solflare wallet not ready.');
+          }
+          if (typeof webWallet.signTransaction !== 'function') {
+            throw new Error('Solflare SDK missing signTransaction; cannot use localnet.');
+          }
+          const signed = await webWallet.signTransaction(tx);
+          const raw = signed.serialize();
+          const signature = await connection.sendRawTransaction(raw, { skipPreflight: false });
+        await confirmSignature(signature);
         setCreateTx(signature);
       } else {
-        if (!state.session) {
-          throw new Error('Missing Solflare session. Reconnect wallet.');
+          if (!state.session || !state.solflareEncryptionPublicKey) {
+            throw new Error('Missing Solflare session. Reconnect wallet.');
+          }
+          if (!keypairRef.current) {
+            throw new Error('Missing Solflare keypair.');
+          }
+          const { data, nonce, dappPublicKey } = encryptPayload(
+            {
+              session: state.session,
+              transaction: tx.serialize({
+                requireAllSignatures: false,
+                verifySignatures: false,
+              }).toString('base64'),
+            },
+            state.solflareEncryptionPublicKey,
+            keypairRef.current,
+          );
+          const params = new URLSearchParams({
+            app_url: DAPP_URL,
+            dapp_encryption_public_key: dappPublicKey,
+            redirect_link: REDIRECT_LINK,
+            cluster: CLUSTER,
+            nonce,
+            data,
+          });
+          const url = `https://solflare.com/ul/v1/signAndSendTransaction?${params.toString()}`;
+          await Linking.openURL(url);
         }
-        const { data, nonce, dappPublicKey } = encryptPayload({
-          session: state.session,
-          transaction: tx.serialize({
-            requireAllSignatures: false,
-            verifySignatures: false,
-          }).toString('base64'),
-        });
-        const params = new URLSearchParams({
-          app_url: DAPP_URL,
-          dapp_encryption_public_key: dappPublicKey,
-          redirect_link: REDIRECT_LINK,
-          cluster: CLUSTER,
-          nonce,
-          data,
-        });
-        const url = `https://solflare.com/ul/v1/signAndSendTransaction?${params.toString()}`;
-        await Linking.openURL(url);
       }
 
-      setCreateTx((prev) => prev ?? state.signature ?? null);
+      setCreateTx(
+        (prev) =>
+          prev ??
+          state.signature ??
+          phantomState.signature ??
+          null,
+      );
       setLastOrderId(orderIdBN.toString());
       setEvents([]);
     } catch (err) {
@@ -530,12 +744,24 @@ export default function WalletScreen() {
   };
 
   const statusText = useMemo(() => {
-    if (state.error) return `Error: ${state.error}`;
-    if (state.publicKey) return `Wallet: ${shorten(state.publicKey)}`;
+    const activeKey = activeWalletPublicKey;
+    const activeError =
+      activeWallet === 'phantom' ? phantomState.error : activeWallet === 'local' ? localError : state.error;
+    if (activeError) return `Error: ${activeError}`;
+    if (activeKey) return `Wallet: ${shorten(activeKey)}`;
     return 'Wallet: Not connected';
-  }, [state.error, state.publicKey]);
+  }, [activeWallet, activeWalletPublicKey, localError, phantomState.error, state.error]);
 
   const isConnected = Boolean(state.publicKey);
+  const isPhantomConnected = Boolean(phantomState.publicKey);
+  const isLocalConnected = Boolean(localKeypair);
+  const canCreateOrder =
+    Boolean(programId) &&
+    (activeWallet === 'local'
+      ? isLocalConnected
+      : activeWallet === 'phantom'
+        ? isPhantomConnected
+        : isConnected);
 
   return (
     <ParallaxScrollView
@@ -544,32 +770,107 @@ export default function WalletScreen() {
       <ThemedView style={styles.container}>
         <View style={styles.hero}>
           <ThemedText type="title">Wallet</ThemedText>
-          <ThemedText type="subtitle">Connect your Solflare wallet</ThemedText>
+          <ThemedText type="subtitle">Connect your Solana wallet</ThemedText>
           <ThemedText style={styles.heroCopy}>
-            Mobile uses Solflare deeplinks. Web uses the Solflare SDK.
+            Mobile uses wallet deeplinks. Web uses browser wallet SDKs.
+          </ThemedText>
+        </View>
+
+        <View style={styles.card}>
+          <ThemedText type="defaultSemiBold">Active Wallet</ThemedText>
+          <View style={styles.switchRow}>
+            <Pressable
+              style={[
+                styles.switchButton,
+                activeWallet === 'solflare' && styles.switchButtonActive,
+              ]}
+              onPress={() => setActiveWallet('solflare')}>
+              <ThemedText
+                style={[
+                  styles.switchText,
+                  activeWallet === 'solflare' ? styles.switchTextActive : styles.switchTextInactive,
+                ]}>
+                Solflare
+              </ThemedText>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.switchButton,
+                activeWallet === 'phantom' && styles.switchButtonActive,
+              ]}
+              onPress={() => setActiveWallet('phantom')}>
+              <ThemedText
+                style={[
+                  styles.switchText,
+                  activeWallet === 'phantom' ? styles.switchTextActive : styles.switchTextInactive,
+                ]}>
+                Phantom
+              </ThemedText>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.switchButton,
+                activeWallet === 'local' && styles.switchButtonActive,
+              ]}
+              onPress={() => setActiveWallet('local')}>
+              <ThemedText
+                style={[
+                  styles.switchText,
+                  activeWallet === 'local' ? styles.switchTextActive : styles.switchTextInactive,
+                ]}>
+                Local
+              </ThemedText>
+            </Pressable>
+          </View>
+          <ThemedText style={styles.cardText}>
+            Using: {activeWallet.charAt(0).toUpperCase() + activeWallet.slice(1)}
           </ThemedText>
         </View>
 
         <View style={styles.card}>
           <ThemedText type="defaultSemiBold">Status</ThemedText>
           <ThemedText style={styles.cardText}>
-            Connection: {isConnected ? 'Connected' : 'Not connected'}
+            Connection:{' '}
+            {activeWallet === 'local'
+              ? isLocalConnected
+                ? 'Connected'
+                : 'Not connected'
+              : activeWallet === 'phantom'
+                ? isPhantomConnected
+                  ? 'Connected'
+                  : 'Not connected'
+                : isConnected
+                  ? 'Connected'
+                  : 'Not connected'}
           </ThemedText>
           <ThemedText style={styles.cardText}>{statusText}</ThemedText>
           <ThemedText style={styles.cardText}>Network: Solana {CLUSTER}</ThemedText>
           <ThemedText style={styles.cardText}>
             Balance:{' '}
-            {balance === null ? '—' : `${balance.toFixed(4)} SOL`}
+            {activeWallet === 'local'
+              ? localBalance === null
+                ? '—'
+                : `${localBalance.toFixed(4)} SOL`
+              : balance === null
+                ? '—'
+                : `${balance.toFixed(4)} SOL`}
           </ThemedText>
-          {balanceError ? <ThemedText style={styles.cardText}>{balanceError}</ThemedText> : null}
+          {activeWallet !== 'local' && balanceError ? (
+            <ThemedText style={styles.cardText}>{balanceError}</ThemedText>
+          ) : null}
           {Platform.OS === 'web' && !webReady ? (
             <ThemedText style={styles.cardText}>Loading Solflare SDK...</ThemedText>
           ) : null}
           {state.lastUrl ? (
             <ThemedText style={styles.cardText}>Last URL: {state.lastUrl}</ThemedText>
           ) : null}
-          {state.signature ? (
+          {activeWallet === 'solflare' && state.signature ? (
             <ThemedText style={styles.cardText}>Last Signature: {state.signature}</ThemedText>
+          ) : null}
+          {activeWallet === 'phantom' && phantomState.signature ? (
+            <ThemedText style={styles.cardText}>
+              Last Signature: {phantomState.signature}
+            </ThemedText>
           ) : null}
           {CLUSTER === 'localnet' ? (
             <ThemedText style={styles.cardText}>
@@ -598,31 +899,72 @@ export default function WalletScreen() {
           {rpcRaw ? <ThemedText style={styles.cardText}>RPC Response: {rpcRaw}</ThemedText> : null}
         </View>
 
-        {isConnected ? (
-          <Pressable
-            style={({ pressed }) => [styles.disconnectButton, pressed && styles.buttonPressed]}
-            onPress={disconnect}
-            disabled={isLoading}
-            accessibilityRole="button">
-            {isLoading ? (
-              <ActivityIndicator color={Colors.light.background} />
-            ) : (
-              <ThemedText style={styles.buttonText}>Disconnect</ThemedText>
-            )}
-          </Pressable>
-        ) : (
-          <Pressable
-            style={({ pressed }) => [styles.connectButton, pressed && styles.buttonPressed]}
-            onPress={connect}
-            disabled={isLoading}
-            accessibilityRole="button">
-            {isLoading ? (
-              <ActivityIndicator color={Colors.light.background} />
-            ) : (
-              <ThemedText style={styles.buttonText}>Connect Solflare</ThemedText>
-            )}
-          </Pressable>
-        )}
+        <View style={styles.card}>
+          <ThemedText type="defaultSemiBold">Solflare Wallet</ThemedText>
+          {isConnected ? (
+            <Pressable
+              style={({ pressed }) => [styles.disconnectButton, pressed && styles.buttonPressed]}
+              onPress={disconnect}
+              disabled={isLoading}
+              accessibilityRole="button">
+              {isLoading ? (
+                <ActivityIndicator color={Colors.light.background} />
+              ) : (
+                <ThemedText style={styles.buttonText}>Disconnect Solflare</ThemedText>
+              )}
+            </Pressable>
+          ) : (
+            <Pressable
+              style={({ pressed }) => [styles.connectButton, pressed && styles.buttonPressed]}
+              onPress={connect}
+              disabled={isLoading}
+              accessibilityRole="button">
+              {isLoading ? (
+                <ActivityIndicator color={Colors.light.background} />
+              ) : (
+                <ThemedText style={styles.buttonText}>Connect Solflare</ThemedText>
+              )}
+            </Pressable>
+          )}
+        </View>
+
+        <View style={styles.card}>
+          <ThemedText type="defaultSemiBold">Phantom Wallet</ThemedText>
+          {phantomState.error ? (
+            <ThemedText style={styles.cardText}>Error: {phantomState.error}</ThemedText>
+          ) : null}
+          {phantomState.lastUrl ? (
+            <ThemedText style={styles.cardText}>Last URL: {phantomState.lastUrl}</ThemedText>
+          ) : null}
+          {Platform.OS === 'web' && !phantomWebReady ? (
+            <ThemedText style={styles.cardText}>Phantom extension not detected.</ThemedText>
+          ) : null}
+          {isPhantomConnected ? (
+            <Pressable
+              style={({ pressed }) => [styles.disconnectButton, pressed && styles.buttonPressed]}
+              onPress={disconnectPhantom}
+              disabled={isLoading}
+              accessibilityRole="button">
+              {isLoading ? (
+                <ActivityIndicator color={Colors.light.background} />
+              ) : (
+                <ThemedText style={styles.buttonText}>Disconnect Phantom</ThemedText>
+              )}
+            </Pressable>
+          ) : (
+            <Pressable
+              style={({ pressed }) => [styles.connectButton, pressed && styles.buttonPressed]}
+              onPress={connectPhantom}
+              disabled={isLoading}
+              accessibilityRole="button">
+              {isLoading ? (
+                <ActivityIndicator color={Colors.light.background} />
+              ) : (
+                <ThemedText style={styles.buttonText}>Connect Phantom</ThemedText>
+              )}
+            </Pressable>
+          )}
+        </View>
 
         {Platform.OS !== 'web' && DAPP_URL === 'https://example.com' ? (
           <ThemedText style={styles.cardText}>
@@ -679,6 +1021,9 @@ export default function WalletScreen() {
 
         <View style={styles.card}>
           <ThemedText type="defaultSemiBold">Customer Order</ThemedText>
+          <ThemedText style={styles.cardText}>
+            Active wallet: {activeWallet.charAt(0).toUpperCase() + activeWallet.slice(1)}
+          </ThemedText>
           {!programId ? (
             <ThemedText style={styles.cardText}>
               Program ID missing. Replace `assets/idl/block_delivery.json` with your IDL.
@@ -702,7 +1047,7 @@ export default function WalletScreen() {
               isCreating && styles.buttonDisabled,
             ]}
             onPress={createOrder}
-            disabled={isCreating || !isConnected || !programId}>
+            disabled={isCreating || !canCreateOrder}>
             {isCreating ? (
               <ActivityIndicator color={Colors.light.background} />
             ) : (
@@ -720,6 +1065,11 @@ export default function WalletScreen() {
 
         <View style={styles.card}>
           <ThemedText type="defaultSemiBold">Events</ThemedText>
+          {Platform.OS === 'android' ? (
+            <ThemedText style={styles.cardText}>
+              Event streaming is disabled on Android to avoid websocket errors.
+            </ThemedText>
+          ) : null}
           {events.length === 0 ? (
             <ThemedText style={styles.cardText}>No events yet.</ThemedText>
           ) : (
@@ -760,6 +1110,33 @@ const styles = StyleSheet.create({
   },
   cardText: {
     opacity: 0.85,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  switchButton: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(120, 120, 120, 0.25)',
+    backgroundColor: 'rgba(120, 120, 120, 0.08)',
+  },
+  switchButtonActive: {
+    backgroundColor: '#1C1C1C',
+    borderColor: '#1C1C1C',
+  },
+  switchText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  switchTextActive: {
+    color: '#FFFFFF',
+  },
+  switchTextInactive: {
+    color: '#1C1C1C',
   },
   inputRow: {
     gap: 8,
