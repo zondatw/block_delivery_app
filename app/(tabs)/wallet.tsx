@@ -14,10 +14,11 @@ import bs58 from 'bs58';
 import nacl from 'tweetnacl';
 import { AnchorProvider, BN, EventParser, Program } from '@coral-xyz/anchor';
 import type { Idl } from '@coral-xyz/anchor';
-import { Connection, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import idlJson from '@/assets/idl/block_delivery.json';
@@ -58,6 +59,12 @@ export default function WalletScreen() {
   const [createTx, setCreateTx] = useState<string | null>(null);
   const [lastOrderId, setLastOrderId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [localKeypair, setLocalKeypair] = useState<Keypair | null>(null);
+  const [localBalance, setLocalBalance] = useState<number | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [localBusy, setLocalBusy] = useState(false);
+
+  const localConnection = useMemo(() => new Connection(SOLANA_RPC_URL, 'confirmed'), []);
 
   useEffect(() => {
     setState(getSolflareState());
@@ -69,6 +76,79 @@ export default function WalletScreen() {
       setCreateTx(state.signature);
     }
   }, [state.signature]);
+
+  useEffect(() => {
+    if (!localKeypair) {
+      setLocalBalance(null);
+      return;
+    }
+
+    let active = true;
+
+    const loadLocalBalance = async () => {
+      try {
+        const lamports = await localConnection.getBalance(localKeypair.publicKey, 'confirmed');
+        if (active) {
+          setLocalBalance(lamports / LAMPORTS_PER_SOL);
+        }
+      } catch (err) {
+        if (active) {
+          setLocalError('Unable to fetch local balance.');
+        }
+      }
+    };
+
+    loadLocalBalance();
+
+    return () => {
+      active = false;
+    };
+  }, [localConnection, localKeypair]);
+
+  const createLocalWallet = () => {
+    setLocalError(null);
+    setLocalKeypair(Keypair.generate());
+  };
+
+  const refreshLocalBalance = async () => {
+    if (!localKeypair) return;
+    setLocalBusy(true);
+    setLocalError(null);
+    try {
+      const lamports = await localConnection.getBalance(localKeypair.publicKey, 'confirmed');
+      setLocalBalance(lamports / LAMPORTS_PER_SOL);
+    } catch (err) {
+      setLocalError('Unable to fetch local balance.');
+    } finally {
+      setLocalBusy(false);
+    }
+  };
+
+  const airdropLocal = async () => {
+    if (!localKeypair) return;
+    setLocalBusy(true);
+    setLocalError(null);
+    try {
+      const signature = await localConnection.requestAirdrop(
+        localKeypair.publicKey,
+        2 * LAMPORTS_PER_SOL,
+      );
+      for (let attempt = 0; attempt < 15; attempt += 1) {
+        const status = await localConnection.getSignatureStatuses([signature]);
+        const info = status?.value?.[0];
+        if (info?.confirmationStatus === 'confirmed' || info?.confirmationStatus === 'finalized') {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      const lamports = await localConnection.getBalance(localKeypair.publicKey, 'confirmed');
+      setLocalBalance(lamports / LAMPORTS_PER_SOL);
+    } catch (err) {
+      setLocalError('Airdrop failed. Check RPC URL and local validator.');
+    } finally {
+      setLocalBusy(false);
+    }
+  };
 
   const checkRpcHealth = async () => {
     setIsCheckingRpc(true);
@@ -458,151 +538,202 @@ export default function WalletScreen() {
   const isConnected = Boolean(state.publicKey);
 
   return (
-    <ThemedView style={styles.container}>
-      <View style={styles.hero}>
-        <ThemedText type="title">Wallet</ThemedText>
-        <ThemedText type="subtitle">Connect your Solflare wallet</ThemedText>
-        <ThemedText style={styles.heroCopy}>
-          Mobile uses Solflare deeplinks. Web uses the Solflare SDK.
-        </ThemedText>
-      </View>
-
-      <View style={styles.card}>
-        <ThemedText type="defaultSemiBold">Status</ThemedText>
-        <ThemedText style={styles.cardText}>
-          Connection: {isConnected ? 'Connected' : 'Not connected'}
-        </ThemedText>
-        <ThemedText style={styles.cardText}>{statusText}</ThemedText>
-        <ThemedText style={styles.cardText}>Network: Solana {CLUSTER}</ThemedText>
-        <ThemedText style={styles.cardText}>
-          Balance:{' '}
-          {balance === null ? '—' : `${balance.toFixed(4)} SOL`}
-        </ThemedText>
-        {balanceError ? <ThemedText style={styles.cardText}>{balanceError}</ThemedText> : null}
-        {Platform.OS === 'web' && !webReady ? (
-          <ThemedText style={styles.cardText}>Loading Solflare SDK...</ThemedText>
-        ) : null}
-        {state.lastUrl ? (
-          <ThemedText style={styles.cardText}>Last URL: {state.lastUrl}</ThemedText>
-        ) : null}
-        {state.signature ? (
-          <ThemedText style={styles.cardText}>Last Signature: {state.signature}</ThemedText>
-        ) : null}
-        {CLUSTER === 'localnet' ? (
-          <ThemedText style={styles.cardText}>
-            Note: Solflare may not support localnet signing.
+    <ParallaxScrollView
+      headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
+    >
+      <ThemedView style={styles.container}>
+        <View style={styles.hero}>
+          <ThemedText type="title">Wallet</ThemedText>
+          <ThemedText type="subtitle">Connect your Solflare wallet</ThemedText>
+          <ThemedText style={styles.heroCopy}>
+            Mobile uses Solflare deeplinks. Web uses the Solflare SDK.
           </ThemedText>
-        ) : null}
-        <Pressable
-          style={({ pressed }) => [
-            styles.rpcButton,
-            pressed && styles.buttonPressed,
-            isCheckingRpc && styles.buttonDisabled,
-          ]}
-          onPress={checkRpcHealth}
-          disabled={isCheckingRpc}>
-          {isCheckingRpc ? (
-            <ActivityIndicator color={Colors.light.background} />
-          ) : (
-            <ThemedText style={styles.buttonText}>Check RPC Health</ThemedText>
-          )}
-        </Pressable>
-        <ThemedText style={styles.cardText}>
-          RPC Status:{' '}
-          {rpcHealth === 'unknown' ? 'Unknown' : rpcHealth === 'ok' ? 'OK' : 'Error'}
-        </ThemedText>
-        {rpcMessage ? <ThemedText style={styles.cardText}>{rpcMessage}</ThemedText> : null}
-        {rpcRaw ? <ThemedText style={styles.cardText}>RPC Response: {rpcRaw}</ThemedText> : null}
-      </View>
-
-      {isConnected ? (
-        <Pressable
-          style={({ pressed }) => [styles.disconnectButton, pressed && styles.buttonPressed]}
-          onPress={disconnect}
-          disabled={isLoading}
-          accessibilityRole="button">
-          {isLoading ? (
-            <ActivityIndicator color={Colors.light.background} />
-          ) : (
-            <ThemedText style={styles.buttonText}>Disconnect</ThemedText>
-          )}
-        </Pressable>
-      ) : (
-        <Pressable
-          style={({ pressed }) => [styles.connectButton, pressed && styles.buttonPressed]}
-          onPress={connect}
-          disabled={isLoading}
-          accessibilityRole="button">
-          {isLoading ? (
-            <ActivityIndicator color={Colors.light.background} />
-          ) : (
-            <ThemedText style={styles.buttonText}>Connect Solflare</ThemedText>
-          )}
-        </Pressable>
-      )}
-
-      {Platform.OS !== 'web' && DAPP_URL === 'https://example.com' ? (
-        <ThemedText style={styles.cardText}>
-          Update EXPO_PUBLIC_DAPP_URL to your production site URL.
-        </ThemedText>
-      ) : null}
-
-      <View style={styles.card}>
-        <ThemedText type="defaultSemiBold">Customer Order</ThemedText>
-        {!programId ? (
-          <ThemedText style={styles.cardText}>
-            Program ID missing. Replace `assets/idl/block_delivery.json` with your IDL.
-          </ThemedText>
-        ) : null}
-        <View style={styles.inputRow}>
-          <ThemedText style={styles.cardText}>Amount</ThemedText>
-          <TextInput
-            style={[styles.input, { color: palette.text, borderColor: palette.icon }]}
-            value={amount}
-            onChangeText={setAmount}
-            keyboardType="numeric"
-            placeholder="Amount"
-            placeholderTextColor={palette.icon}
-          />
         </View>
-        <Pressable
-          style={({ pressed }) => [
-            styles.connectButton,
-            pressed && styles.buttonPressed,
-            isCreating && styles.buttonDisabled,
-          ]}
-          onPress={createOrder}
-          disabled={isCreating || !isConnected || !programId}>
-          {isCreating ? (
-            <ActivityIndicator color={Colors.light.background} />
-          ) : (
-            <ThemedText style={styles.buttonText}>Create Order</ThemedText>
-          )}
-        </Pressable>
-        {createTx ? (
-          <ThemedText style={styles.cardText}>Tx: {createTx}</ThemedText>
-        ) : null}
-        {lastOrderId ? (
-          <ThemedText style={styles.cardText}>Order ID: {lastOrderId}</ThemedText>
-        ) : null}
-        {createError ? <ThemedText style={styles.cardText}>{createError}</ThemedText> : null}
-      </View>
 
-      <View style={styles.card}>
-        <ThemedText type="defaultSemiBold">Events</ThemedText>
-        {events.length === 0 ? (
-          <ThemedText style={styles.cardText}>No events yet.</ThemedText>
+        <View style={styles.card}>
+          <ThemedText type="defaultSemiBold">Status</ThemedText>
+          <ThemedText style={styles.cardText}>
+            Connection: {isConnected ? 'Connected' : 'Not connected'}
+          </ThemedText>
+          <ThemedText style={styles.cardText}>{statusText}</ThemedText>
+          <ThemedText style={styles.cardText}>Network: Solana {CLUSTER}</ThemedText>
+          <ThemedText style={styles.cardText}>
+            Balance:{' '}
+            {balance === null ? '—' : `${balance.toFixed(4)} SOL`}
+          </ThemedText>
+          {balanceError ? <ThemedText style={styles.cardText}>{balanceError}</ThemedText> : null}
+          {Platform.OS === 'web' && !webReady ? (
+            <ThemedText style={styles.cardText}>Loading Solflare SDK...</ThemedText>
+          ) : null}
+          {state.lastUrl ? (
+            <ThemedText style={styles.cardText}>Last URL: {state.lastUrl}</ThemedText>
+          ) : null}
+          {state.signature ? (
+            <ThemedText style={styles.cardText}>Last Signature: {state.signature}</ThemedText>
+          ) : null}
+          {CLUSTER === 'localnet' ? (
+            <ThemedText style={styles.cardText}>
+              Note: Solflare may not support localnet signing.
+            </ThemedText>
+          ) : null}
+          <Pressable
+            style={({ pressed }) => [
+              styles.rpcButton,
+              pressed && styles.buttonPressed,
+              isCheckingRpc && styles.buttonDisabled,
+            ]}
+            onPress={checkRpcHealth}
+            disabled={isCheckingRpc}>
+            {isCheckingRpc ? (
+              <ActivityIndicator color={Colors.light.background} />
+            ) : (
+              <ThemedText style={styles.buttonText}>Check RPC Health</ThemedText>
+            )}
+          </Pressable>
+          <ThemedText style={styles.cardText}>
+            RPC Status:{' '}
+            {rpcHealth === 'unknown' ? 'Unknown' : rpcHealth === 'ok' ? 'OK' : 'Error'}
+          </ThemedText>
+          {rpcMessage ? <ThemedText style={styles.cardText}>{rpcMessage}</ThemedText> : null}
+          {rpcRaw ? <ThemedText style={styles.cardText}>RPC Response: {rpcRaw}</ThemedText> : null}
+        </View>
+
+        {isConnected ? (
+          <Pressable
+            style={({ pressed }) => [styles.disconnectButton, pressed && styles.buttonPressed]}
+            onPress={disconnect}
+            disabled={isLoading}
+            accessibilityRole="button">
+            {isLoading ? (
+              <ActivityIndicator color={Colors.light.background} />
+            ) : (
+              <ThemedText style={styles.buttonText}>Disconnect</ThemedText>
+            )}
+          </Pressable>
         ) : (
-          <ScrollView style={styles.events} nestedScrollEnabled>
-            {events.map((event, index) => (
-              <ThemedText key={`${index}`} style={styles.eventItem}>
-                {JSON.stringify(event, null, 2)}
-              </ThemedText>
-            ))}
-          </ScrollView>
+          <Pressable
+            style={({ pressed }) => [styles.connectButton, pressed && styles.buttonPressed]}
+            onPress={connect}
+            disabled={isLoading}
+            accessibilityRole="button">
+            {isLoading ? (
+              <ActivityIndicator color={Colors.light.background} />
+            ) : (
+              <ThemedText style={styles.buttonText}>Connect Solflare</ThemedText>
+            )}
+          </Pressable>
         )}
-      </View>
-    </ThemedView>
+
+        {Platform.OS !== 'web' && DAPP_URL === 'https://example.com' ? (
+          <ThemedText style={styles.cardText}>
+            Update EXPO_PUBLIC_DAPP_URL to your production site URL.
+          </ThemedText>
+        ) : null}
+
+        <View style={styles.card}>
+          <ThemedText type="defaultSemiBold">Local Dev Wallet</ThemedText>
+          <ThemedText style={styles.cardText}>RPC: {SOLANA_RPC_URL}</ThemedText>
+          <ThemedText style={styles.cardText}>
+            Address: {localKeypair ? shorten(localKeypair.publicKey.toBase58()) : 'Not created'}
+          </ThemedText>
+          <ThemedText style={styles.cardText}>
+            Balance: {localBalance === null ? '—' : `${localBalance.toFixed(4)} SOL`}
+          </ThemedText>
+          {localError ? <ThemedText style={styles.cardText}>{localError}</ThemedText> : null}
+          <Pressable
+            style={({ pressed }) => [styles.connectButton, pressed && styles.buttonPressed]}
+            onPress={createLocalWallet}
+            disabled={localBusy}
+            accessibilityRole="button">
+            <ThemedText style={styles.buttonText}>Generate Local Wallet</ThemedText>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.disconnectButton, pressed && styles.buttonPressed]}
+            onPress={airdropLocal}
+            disabled={!localKeypair || localBusy}
+            accessibilityRole="button">
+            {localBusy ? (
+              <ActivityIndicator color={Colors.light.background} />
+            ) : (
+              <ThemedText style={styles.buttonText}>Airdrop 2 SOL</ThemedText>
+            )}
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.connectButton, pressed && styles.buttonPressed]}
+            onPress={refreshLocalBalance}
+            disabled={!localKeypair || localBusy}
+            accessibilityRole="button">
+            <ThemedText style={styles.buttonText}>Refresh Balance</ThemedText>
+          </Pressable>
+          {Platform.OS === 'android' && SOLANA_RPC_URL.includes('127.0.0.1') ? (
+            <ThemedText style={styles.cardText}>
+              Android note: use 10.0.2.2 for emulator or your LAN IP for device.
+            </ThemedText>
+          ) : null}
+          {CLUSTER !== 'localnet' ? (
+            <ThemedText style={styles.cardText}>
+              Note: Airdrop works only on localnet/devnet. For mainnet, fund manually.
+            </ThemedText>
+          ) : null}
+        </View>
+
+        <View style={styles.card}>
+          <ThemedText type="defaultSemiBold">Customer Order</ThemedText>
+          {!programId ? (
+            <ThemedText style={styles.cardText}>
+              Program ID missing. Replace `assets/idl/block_delivery.json` with your IDL.
+            </ThemedText>
+          ) : null}
+          <View style={styles.inputRow}>
+            <ThemedText style={styles.cardText}>Amount</ThemedText>
+            <TextInput
+              style={[styles.input, { color: palette.text, borderColor: palette.icon }]}
+              value={amount}
+              onChangeText={setAmount}
+              keyboardType="numeric"
+              placeholder="Amount"
+              placeholderTextColor={palette.icon}
+            />
+          </View>
+          <Pressable
+            style={({ pressed }) => [
+              styles.connectButton,
+              pressed && styles.buttonPressed,
+              isCreating && styles.buttonDisabled,
+            ]}
+            onPress={createOrder}
+            disabled={isCreating || !isConnected || !programId}>
+            {isCreating ? (
+              <ActivityIndicator color={Colors.light.background} />
+            ) : (
+              <ThemedText style={styles.buttonText}>Create Order</ThemedText>
+            )}
+          </Pressable>
+          {createTx ? (
+            <ThemedText style={styles.cardText}>Tx: {createTx}</ThemedText>
+          ) : null}
+          {lastOrderId ? (
+            <ThemedText style={styles.cardText}>Order ID: {lastOrderId}</ThemedText>
+          ) : null}
+          {createError ? <ThemedText style={styles.cardText}>{createError}</ThemedText> : null}
+        </View>
+
+        <View style={styles.card}>
+          <ThemedText type="defaultSemiBold">Events</ThemedText>
+          {events.length === 0 ? (
+            <ThemedText style={styles.cardText}>No events yet.</ThemedText>
+          ) : (
+            <ScrollView style={styles.events} nestedScrollEnabled>
+              {events.map((event, index) => (
+                <ThemedText key={`${index}`} style={styles.eventItem}>
+                  {JSON.stringify(event, null, 2)}
+                </ThemedText>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      </ThemedView>
+    </ParallaxScrollView>
   );
 }
 
