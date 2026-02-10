@@ -1026,6 +1026,107 @@ export default function WalletScreen() {
           <ThemedText style={styles.cardText}>
             Using: {activeWallet.charAt(0).toUpperCase() + activeWallet.slice(1)}
           </ThemedText>
+          {activeWallet === 'solflare' ? (
+            isConnected ? (
+              <Pressable
+                style={({ pressed }) => [styles.disconnectButton, pressed && styles.buttonPressed]}
+                onPress={disconnect}
+                disabled={isLoading}
+                accessibilityRole="button">
+                {isLoading ? (
+                  <ActivityIndicator color={Colors.light.background} />
+                ) : (
+                  <ThemedText style={styles.buttonText}>Disconnect Solflare</ThemedText>
+                )}
+              </Pressable>
+            ) : (
+              <Pressable
+                style={({ pressed }) => [styles.connectButton, pressed && styles.buttonPressed]}
+                onPress={connect}
+                disabled={isLoading}
+                accessibilityRole="button">
+                {isLoading ? (
+                  <ActivityIndicator color={Colors.light.background} />
+                ) : (
+                  <ThemedText style={styles.buttonText}>Connect Solflare</ThemedText>
+                )}
+              </Pressable>
+            )
+          ) : null}
+          {activeWallet === 'phantom' ? (
+            isPhantomConnected ? (
+              <Pressable
+                style={({ pressed }) => [styles.disconnectButton, pressed && styles.buttonPressed]}
+                onPress={disconnectPhantom}
+                disabled={isLoading}
+                accessibilityRole="button">
+                {isLoading ? (
+                  <ActivityIndicator color={Colors.light.background} />
+                ) : (
+                  <ThemedText style={styles.buttonText}>Disconnect Phantom</ThemedText>
+                )}
+              </Pressable>
+            ) : (
+              <Pressable
+                style={({ pressed }) => [styles.connectButton, pressed && styles.buttonPressed]}
+                onPress={connectPhantom}
+                disabled={isLoading}
+                accessibilityRole="button">
+                {isLoading ? (
+                  <ActivityIndicator color={Colors.light.background} />
+                ) : (
+                  <ThemedText style={styles.buttonText}>Connect Phantom</ThemedText>
+                )}
+              </Pressable>
+            )
+          ) : null}
+          {activeWallet === 'local' ? (
+            <>
+              <ThemedText style={styles.cardText}>RPC: {SOLANA_RPC_URL}</ThemedText>
+              <ThemedText style={styles.cardText}>
+                Address: {localKeypair ? shorten(localKeypair.publicKey.toBase58()) : 'Not created'}
+              </ThemedText>
+              <ThemedText style={styles.cardText}>
+                Balance: {localBalance === null ? '—' : `${localBalance.toFixed(4)} SOL`}
+              </ThemedText>
+              {localError ? <ThemedText style={styles.cardText}>{localError}</ThemedText> : null}
+              <Pressable
+                style={({ pressed }) => [styles.connectButton, pressed && styles.buttonPressed]}
+                onPress={createLocalWallet}
+                disabled={localBusy}
+                accessibilityRole="button">
+                <ThemedText style={styles.buttonText}>Generate Local Wallet</ThemedText>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.disconnectButton, pressed && styles.buttonPressed]}
+                onPress={airdropLocal}
+                disabled={!localKeypair || localBusy}
+                accessibilityRole="button">
+                {localBusy ? (
+                  <ActivityIndicator color={Colors.light.background} />
+                ) : (
+                  <ThemedText style={styles.buttonText}>Airdrop 2 SOL</ThemedText>
+                )}
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.connectButton, pressed && styles.buttonPressed]}
+                onPress={refreshLocalBalance}
+                disabled={!localKeypair || localBusy}
+                accessibilityRole="button">
+                <ThemedText style={styles.buttonText}>Refresh Balance</ThemedText>
+              </Pressable>
+              {Platform.OS === 'android' && SOLANA_RPC_URL.includes('127.0.0.1') ? (
+                <ThemedText style={styles.cardText}>
+                  Android note: use 10.0.2.2 for emulator or your LAN IP for device.
+                </ThemedText>
+              ) : null}
+              {CLUSTER !== 'localnet' ? (
+                <ThemedText style={styles.cardText}>
+                  Note: Airdrop works only on localnet/devnet. For mainnet, fund manually.
+                </ThemedText>
+              ) : null}
+            </>
+          ) : null}
         </View>
 
         <View style={styles.card}>
@@ -1100,125 +1201,11 @@ export default function WalletScreen() {
           {rpcRaw ? <ThemedText style={styles.cardText}>RPC Response: {rpcRaw}</ThemedText> : null}
         </View>
 
-        <View style={styles.card}>
-          <ThemedText type="defaultSemiBold">Solflare Wallet</ThemedText>
-          {isConnected ? (
-            <Pressable
-              style={({ pressed }) => [styles.disconnectButton, pressed && styles.buttonPressed]}
-              onPress={disconnect}
-              disabled={isLoading}
-              accessibilityRole="button">
-              {isLoading ? (
-                <ActivityIndicator color={Colors.light.background} />
-              ) : (
-                <ThemedText style={styles.buttonText}>Disconnect Solflare</ThemedText>
-              )}
-            </Pressable>
-          ) : (
-            <Pressable
-              style={({ pressed }) => [styles.connectButton, pressed && styles.buttonPressed]}
-              onPress={connect}
-              disabled={isLoading}
-              accessibilityRole="button">
-              {isLoading ? (
-                <ActivityIndicator color={Colors.light.background} />
-              ) : (
-                <ThemedText style={styles.buttonText}>Connect Solflare</ThemedText>
-              )}
-            </Pressable>
-          )}
-        </View>
-
-        <View style={styles.card}>
-          <ThemedText type="defaultSemiBold">Phantom Wallet</ThemedText>
-          {phantomState.error ? (
-            <ThemedText style={styles.cardText}>Error: {phantomState.error}</ThemedText>
-          ) : null}
-          {phantomState.lastUrl ? (
-            <ThemedText style={styles.cardText}>Last URL: {phantomState.lastUrl}</ThemedText>
-          ) : null}
-          {Platform.OS === 'web' && !phantomWebReady ? (
-            <ThemedText style={styles.cardText}>Phantom extension not detected.</ThemedText>
-          ) : null}
-          {isPhantomConnected ? (
-            <Pressable
-              style={({ pressed }) => [styles.disconnectButton, pressed && styles.buttonPressed]}
-              onPress={disconnectPhantom}
-              disabled={isLoading}
-              accessibilityRole="button">
-              {isLoading ? (
-                <ActivityIndicator color={Colors.light.background} />
-              ) : (
-                <ThemedText style={styles.buttonText}>Disconnect Phantom</ThemedText>
-              )}
-            </Pressable>
-          ) : (
-            <Pressable
-              style={({ pressed }) => [styles.connectButton, pressed && styles.buttonPressed]}
-              onPress={connectPhantom}
-              disabled={isLoading}
-              accessibilityRole="button">
-              {isLoading ? (
-                <ActivityIndicator color={Colors.light.background} />
-              ) : (
-                <ThemedText style={styles.buttonText}>Connect Phantom</ThemedText>
-              )}
-            </Pressable>
-          )}
-        </View>
-
         {Platform.OS !== 'web' && DAPP_URL === 'https://example.com' ? (
           <ThemedText style={styles.cardText}>
             Update EXPO_PUBLIC_DAPP_URL to your production site URL.
           </ThemedText>
         ) : null}
-
-        <View style={styles.card}>
-          <ThemedText type="defaultSemiBold">Local Dev Wallet</ThemedText>
-          <ThemedText style={styles.cardText}>RPC: {SOLANA_RPC_URL}</ThemedText>
-          <ThemedText style={styles.cardText}>
-            Address: {localKeypair ? shorten(localKeypair.publicKey.toBase58()) : 'Not created'}
-          </ThemedText>
-          <ThemedText style={styles.cardText}>
-            Balance: {localBalance === null ? '—' : `${localBalance.toFixed(4)} SOL`}
-          </ThemedText>
-          {localError ? <ThemedText style={styles.cardText}>{localError}</ThemedText> : null}
-          <Pressable
-            style={({ pressed }) => [styles.connectButton, pressed && styles.buttonPressed]}
-            onPress={createLocalWallet}
-            disabled={localBusy}
-            accessibilityRole="button">
-            <ThemedText style={styles.buttonText}>Generate Local Wallet</ThemedText>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.disconnectButton, pressed && styles.buttonPressed]}
-            onPress={airdropLocal}
-            disabled={!localKeypair || localBusy}
-            accessibilityRole="button">
-            {localBusy ? (
-              <ActivityIndicator color={Colors.light.background} />
-            ) : (
-              <ThemedText style={styles.buttonText}>Airdrop 2 SOL</ThemedText>
-            )}
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.connectButton, pressed && styles.buttonPressed]}
-            onPress={refreshLocalBalance}
-            disabled={!localKeypair || localBusy}
-            accessibilityRole="button">
-            <ThemedText style={styles.buttonText}>Refresh Balance</ThemedText>
-          </Pressable>
-          {Platform.OS === 'android' && SOLANA_RPC_URL.includes('127.0.0.1') ? (
-            <ThemedText style={styles.cardText}>
-              Android note: use 10.0.2.2 for emulator or your LAN IP for device.
-            </ThemedText>
-          ) : null}
-          {CLUSTER !== 'localnet' ? (
-            <ThemedText style={styles.cardText}>
-              Note: Airdrop works only on localnet/devnet. For mainnet, fund manually.
-            </ThemedText>
-          ) : null}
-        </View>
 
         <View style={styles.card}>
           <ThemedText type="defaultSemiBold">Orders</ThemedText>
