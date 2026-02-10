@@ -51,7 +51,7 @@ const toSol = (lamports: number) => lamports / 1_000_000_000;
 export default function WalletScreen() {
   const colorScheme = useColorScheme();
   const palette = Colors[colorScheme ?? 'light'];
-  const [state, setState] = useState(getSolflareState());
+  const [solflareState, setSolflareState] = useState(getSolflareState());
   const [phantomState, setPhantomState] = useState(getPhantomState());
   const [activeWallet, setActiveWallet] = useState<'solflare' | 'phantom' | 'local'>('solflare');
   const [isLoading, setIsLoading] = useState(false);
@@ -91,12 +91,12 @@ export default function WalletScreen() {
     if (activeWallet === 'phantom') {
       return phantomState.publicKey ?? null;
     }
-    return state.publicKey ?? null;
-  }, [activeWallet, localKeypair, phantomState.publicKey, state.publicKey]);
+    return solflareState.publicKey ?? null;
+  }, [activeWallet, localKeypair, phantomState.publicKey, solflareState.publicKey]);
 
   useEffect(() => {
-    setState(getSolflareState());
-    return subscribeSolflareState((next) => setState(next));
+    setSolflareState(getSolflareState());
+    return subscribeSolflareState((next) => setSolflareState(next));
   }, []);
 
   useEffect(() => {
@@ -105,10 +105,10 @@ export default function WalletScreen() {
   }, []);
 
   useEffect(() => {
-    if (state.signature) {
-      setCreateTx(state.signature);
+    if (solflareState.signature) {
+      setCreateTx(solflareState.signature);
     }
-  }, [state.signature]);
+  }, [solflareState.signature]);
 
   useEffect(() => {
     if (phantomState.signature) {
@@ -359,20 +359,20 @@ export default function WalletScreen() {
 
         const wallet = new solflareModule.default();
         wallet.on?.('connect', () => {
-          setState((prev) => ({
+          setSolflareState((prev) => ({
             ...prev,
             publicKey: wallet.publicKey?.toString?.() ?? null,
           }));
         });
         wallet.on?.('disconnect', () => {
-          setState((prev) => ({ ...prev, publicKey: null }));
+          setSolflareState((prev) => ({ ...prev, publicKey: null }));
         });
 
         setWebWallet(wallet);
         setWebReady(true);
       } catch (err) {
         if (active) {
-          setState((prev) => ({ ...prev, error: 'Solflare SDK failed to load.' }));
+          setSolflareState((prev) => ({ ...prev, error: 'Solflare SDK failed to load.' }));
         }
       }
     };
@@ -440,19 +440,19 @@ export default function WalletScreen() {
 
   const connect = async () => {
     setActiveWallet('solflare');
-    setState((prev) => ({ ...prev, error: null }));
+    setSolflareState((prev) => ({ ...prev, error: null }));
     setCreateError(null);
 
     if (Platform.OS === 'web') {
       if (!webWallet) {
-        setState((prev) => ({ ...prev, error: 'Solflare wallet not ready.' }));
+        setSolflareState((prev) => ({ ...prev, error: 'Solflare wallet not ready.' }));
         return;
       }
       setIsLoading(true);
       try {
         await webWallet.connect();
       } catch (err) {
-        setState((prev) => ({ ...prev, error: 'Connection cancelled or failed.' }));
+        setSolflareState((prev) => ({ ...prev, error: 'Connection cancelled or failed.' }));
       } finally {
         setIsLoading(false);
       }
@@ -478,7 +478,7 @@ export default function WalletScreen() {
       await Linking.openURL(url);
     } catch (err) {
       resetSolflareState();
-      setState((prev) => ({ ...prev, error: 'Unable to open Solflare.' }));
+      setSolflareState((prev) => ({ ...prev, error: 'Unable to open Solflare.' }));
     } finally {
       setIsLoading(false);
     }
@@ -544,7 +544,7 @@ export default function WalletScreen() {
       try {
         await webWallet.disconnect();
       } catch (err) {
-        setState((prev) => ({ ...prev, error: 'Disconnect failed.' }));
+        setSolflareState((prev) => ({ ...prev, error: 'Disconnect failed.' }));
       } finally {
         setIsLoading(false);
       }
@@ -701,7 +701,7 @@ export default function WalletScreen() {
         await confirmSignature(signature);
         setCreateTx(signature);
       } else {
-          if (!state.session || !state.solflareEncryptionPublicKey) {
+          if (!solflareState.session || !solflareState.solflareEncryptionPublicKey) {
             throw new Error('Missing Solflare session. Reconnect wallet.');
           }
           if (!keypairRef.current) {
@@ -709,13 +709,13 @@ export default function WalletScreen() {
           }
           const { data, nonce, dappPublicKey } = encryptPayload(
             {
-              session: state.session,
+              session: solflareState.session,
               transaction: tx.serialize({
                 requireAllSignatures: false,
                 verifySignatures: false,
               }).toString('base64'),
             },
-            state.solflareEncryptionPublicKey,
+            solflareState.solflareEncryptionPublicKey,
             keypairRef.current,
           );
           const params = new URLSearchParams({
@@ -734,7 +734,7 @@ export default function WalletScreen() {
       setCreateTx(
         (prev) =>
           prev ??
-          state.signature ??
+          solflareState.signature ??
           phantomState.signature ??
           null,
       );
@@ -820,7 +820,7 @@ export default function WalletScreen() {
       return signature;
     }
 
-    if (!state.session || !state.solflareEncryptionPublicKey) {
+    if (!solflareState.session || !solflareState.solflareEncryptionPublicKey) {
       throw new Error('Missing Solflare session. Reconnect wallet.');
     }
     if (!keypairRef.current) {
@@ -828,13 +828,13 @@ export default function WalletScreen() {
     }
     const { data, nonce, dappPublicKey } = encryptPayload(
       {
-        session: state.session,
+        session: solflareState.session,
         transaction: tx.serialize({
           requireAllSignatures: false,
           verifySignatures: false,
         }).toString('base64'),
       },
-      state.solflareEncryptionPublicKey,
+      solflareState.solflareEncryptionPublicKey,
       keypairRef.current,
     );
     const params = new URLSearchParams({
@@ -847,7 +847,7 @@ export default function WalletScreen() {
     });
     const url = `https://solflare.com/ul/v1/signAndSendTransaction?${params.toString()}`;
     await Linking.openURL(url);
-    return state.signature ?? null;
+    return solflareState.signature ?? null;
   };
 
   const acceptOrder = async () => {
@@ -947,13 +947,13 @@ export default function WalletScreen() {
   const statusText = useMemo(() => {
     const activeKey = activeWalletPublicKey;
     const activeError =
-      activeWallet === 'phantom' ? phantomState.error : activeWallet === 'local' ? localError : state.error;
+      activeWallet === 'phantom' ? phantomState.error : activeWallet === 'local' ? localError : solflareState.error;
     if (activeError) return `Error: ${activeError}`;
     if (activeKey) return `Wallet: ${shorten(activeKey)}`;
     return 'Wallet: Not connected';
-  }, [activeWallet, activeWalletPublicKey, localError, phantomState.error, state.error]);
+  }, [activeWallet, activeWalletPublicKey, localError, phantomState.error, solflareState.error]);
 
-  const isConnected = Boolean(state.publicKey);
+  const isConnected = Boolean(solflareState.publicKey);
   const isPhantomConnected = Boolean(phantomState.publicKey);
   const isLocalConnected = Boolean(localKeypair);
   const canCreateOrder =
@@ -1166,11 +1166,11 @@ export default function WalletScreen() {
           {Platform.OS === 'web' && !webReady ? (
             <ThemedText style={styles.cardText}>Loading Solflare SDK...</ThemedText>
           ) : null}
-          {state.lastUrl ? (
-            <ThemedText style={styles.cardText}>Last URL: {state.lastUrl}</ThemedText>
+          {solflareState.lastUrl ? (
+            <ThemedText style={styles.cardText}>Last URL: {solflareState.lastUrl}</ThemedText>
           ) : null}
-          {activeWallet === 'solflare' && state.signature ? (
-            <ThemedText style={styles.cardText}>Last Signature: {state.signature}</ThemedText>
+          {activeWallet === 'solflare' && solflareState.signature ? (
+            <ThemedText style={styles.cardText}>Last Signature: {solflareState.signature}</ThemedText>
           ) : null}
           {activeWallet === 'phantom' && phantomState.signature ? (
             <ThemedText style={styles.cardText}>
