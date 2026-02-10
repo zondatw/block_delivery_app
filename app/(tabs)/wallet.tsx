@@ -80,6 +80,7 @@ export default function WalletScreen() {
   const [localBalance, setLocalBalance] = useState<number | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [localBusy, setLocalBusy] = useState(false);
+  const [activeRole, setActiveRole] = useState<'customer' | 'courier'>('customer');
 
   const localConnection = useMemo(() => new Connection(SOLANA_RPC_URL, 'confirmed'), []);
 
@@ -1220,87 +1221,125 @@ export default function WalletScreen() {
         </View>
 
         <View style={styles.card}>
-          <ThemedText type="defaultSemiBold">Customer Order</ThemedText>
+          <ThemedText type="defaultSemiBold">Orders</ThemedText>
           <ThemedText style={styles.cardText}>
             Active wallet: {activeWallet.charAt(0).toUpperCase() + activeWallet.slice(1)}
+          </ThemedText>
+          <View style={styles.switchRow}>
+            <Pressable
+              style={[
+                styles.switchButton,
+                activeRole === 'customer' && styles.switchButtonActive,
+              ]}
+              onPress={() => setActiveRole('customer')}>
+              <ThemedText
+                style={[
+                  styles.switchText,
+                  activeRole === 'customer' ? styles.switchTextActive : styles.switchTextInactive,
+                ]}>
+                Customer
+              </ThemedText>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.switchButton,
+                activeRole === 'courier' && styles.switchButtonActive,
+              ]}
+              onPress={() => setActiveRole('courier')}>
+              <ThemedText
+                style={[
+                  styles.switchText,
+                  activeRole === 'courier' ? styles.switchTextActive : styles.switchTextInactive,
+                ]}>
+                Courier
+              </ThemedText>
+            </Pressable>
+          </View>
+          <ThemedText style={styles.cardText}>
+            Role: {activeRole.charAt(0).toUpperCase() + activeRole.slice(1)}
           </ThemedText>
           {!programId ? (
             <ThemedText style={styles.cardText}>
               Program ID missing. Replace `assets/idl/block_delivery.json` with your IDL.
             </ThemedText>
           ) : null}
-          <View style={styles.inputRow}>
-            <ThemedText style={styles.cardText}>Amount</ThemedText>
+          {activeRole === 'customer' ? (
+            <View style={styles.inputRow}>
+              <ThemedText style={styles.cardText}>Amount</ThemedText>
+              <TextInput
+                style={[styles.input, { color: palette.text, borderColor: palette.icon }]}
+                value={amount}
+                onChangeText={setAmount}
+                keyboardType="numeric"
+                placeholder="Amount"
+                placeholderTextColor={palette.icon}
+              />
+            </View>
+          ) : (
             <TextInput
               style={[styles.input, { color: palette.text, borderColor: palette.icon }]}
-              value={amount}
-              onChangeText={setAmount}
-              keyboardType="numeric"
-              placeholder="Amount"
+              value={orderAddress}
+              onChangeText={setOrderAddress}
+              placeholder="Order PDA"
               placeholderTextColor={palette.icon}
+              autoCapitalize="none"
+              autoCorrect={false}
             />
-          </View>
-          <Pressable
-            style={({ pressed }) => [
-              styles.connectButton,
-              pressed && styles.buttonPressed,
-              isCreating && styles.buttonDisabled,
-            ]}
-            onPress={createOrder}
-            disabled={isCreating || !canCreateOrder}>
-            {isCreating ? (
-              <ActivityIndicator color={Colors.light.background} />
-            ) : (
-              <ThemedText style={styles.buttonText}>Create Order</ThemedText>
-            )}
-          </Pressable>
-          {createTx ? (
-            <ThemedText style={styles.cardText}>Tx: {createTx}</ThemedText>
-          ) : null}
-          {lastOrderId ? (
-            <ThemedText style={styles.cardText}>Order ID: {lastOrderId}</ThemedText>
-          ) : null}
-          {createError ? <ThemedText style={styles.cardText}>{createError}</ThemedText> : null}
-        </View>
-
-        <View style={styles.card}>
-          <ThemedText type="defaultSemiBold">Courier</ThemedText>
-          <ThemedText style={styles.cardText}>
-            Active wallet: {activeWallet.charAt(0).toUpperCase() + activeWallet.slice(1)}
-          </ThemedText>
-          <TextInput
-            style={[styles.input, { color: palette.text, borderColor: palette.icon }]}
-            value={orderAddress}
-            onChangeText={setOrderAddress}
-            placeholder="Order PDA"
-            placeholderTextColor={palette.icon}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <View style={styles.buttonRow}>
-            <Pressable
-              style={({ pressed }) => [
-                styles.connectButton,
-                pressed && styles.buttonPressed,
-                isCreating && styles.buttonDisabled,
-              ]}
-              onPress={acceptOrder}
-              disabled={isCreating || !canCreateOrder}>
-              <ThemedText style={styles.buttonText}>Accept</ThemedText>
-            </Pressable>
-            <Pressable
-              style={({ pressed }) => [
-                styles.disconnectButton,
-                pressed && styles.buttonPressed,
-                isCreating && styles.buttonDisabled,
-              ]}
-              onPress={completeOrder}
-              disabled={isCreating || !canCreateOrder}>
-              <ThemedText style={styles.buttonText}>Complete</ThemedText>
-            </Pressable>
-          </View>
-          {courierTx ? <ThemedText style={styles.cardText}>Tx: {courierTx}</ThemedText> : null}
-          {courierError ? <ThemedText style={styles.cardText}>{courierError}</ThemedText> : null}
+          )}
+          {activeRole === 'customer' ? (
+            <>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.connectButton,
+                  pressed && styles.buttonPressed,
+                  isCreating && styles.buttonDisabled,
+                ]}
+                onPress={createOrder}
+                disabled={isCreating || !canCreateOrder}>
+                {isCreating ? (
+                  <ActivityIndicator color={Colors.light.background} />
+                ) : (
+                  <ThemedText style={styles.buttonText}>Create Order</ThemedText>
+                )}
+              </Pressable>
+              {createTx ? (
+                <ThemedText style={styles.cardText}>Tx: {createTx}</ThemedText>
+              ) : null}
+              {lastOrderId ? (
+                <ThemedText style={styles.cardText}>Order ID: {lastOrderId}</ThemedText>
+              ) : null}
+              {createError ? <ThemedText style={styles.cardText}>{createError}</ThemedText> : null}
+            </>
+          ) : (
+            <>
+              <View style={styles.buttonRow}>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.connectButton,
+                    pressed && styles.buttonPressed,
+                    isCreating && styles.buttonDisabled,
+                  ]}
+                  onPress={acceptOrder}
+                  disabled={isCreating || !canCreateOrder}>
+                  <ThemedText style={styles.buttonText}>Accept</ThemedText>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.disconnectButton,
+                    pressed && styles.buttonPressed,
+                    isCreating && styles.buttonDisabled,
+                  ]}
+                  onPress={completeOrder}
+                  disabled={isCreating || !canCreateOrder}>
+                  <ThemedText style={styles.buttonText}>Complete</ThemedText>
+                </Pressable>
+              </View>
+              {courierTx ? <ThemedText style={styles.cardText}>Tx: {courierTx}</ThemedText> : null}
+              {courierError ? (
+                <ThemedText style={styles.cardText}>{courierError}</ThemedText>
+              ) : null}
+            </>
+          )}
         </View>
 
         <View style={styles.card}>
