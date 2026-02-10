@@ -957,12 +957,15 @@ export default function WalletScreen() {
   const isPhantomConnected = Boolean(phantomState.publicKey);
   const isLocalConnected = Boolean(localKeypair);
   const canCreateOrder =
-    Boolean(programId) &&
-    (activeWallet === 'local'
+    activeWallet === 'local'
       ? isLocalConnected
       : activeWallet === 'phantom'
         ? isPhantomConnected
-        : isConnected);
+        : isConnected;
+  const canCreateCustomer =
+    canCreateOrder && Boolean(amount) && !Number.isNaN(Number(amount));
+  const canCourierAction =
+    canCreateOrder && Boolean(orderAddress.trim());
 
   return (
     <ParallaxScrollView
@@ -1201,12 +1204,6 @@ export default function WalletScreen() {
           {rpcRaw ? <ThemedText style={styles.cardText}>RPC Response: {rpcRaw}</ThemedText> : null}
         </View>
 
-        {Platform.OS !== 'web' && DAPP_URL === 'https://example.com' ? (
-          <ThemedText style={styles.cardText}>
-            Update EXPO_PUBLIC_DAPP_URL to your production site URL.
-          </ThemedText>
-        ) : null}
-
         <View style={styles.card}>
           <ThemedText type="defaultSemiBold">Orders</ThemedText>
           <ThemedText style={styles.cardText}>
@@ -1275,14 +1272,14 @@ export default function WalletScreen() {
           )}
           {activeRole === 'customer' ? (
             <>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.connectButton,
-                  pressed && styles.buttonPressed,
-                  isCreating && styles.buttonDisabled,
-                ]}
-                onPress={createOrder}
-                disabled={isCreating || !canCreateOrder}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.connectButton,
+              pressed && styles.buttonPressed,
+              (isCreating || !canCreateCustomer) && styles.buttonDisabled,
+            ]}
+            onPress={createOrder}
+            disabled={isCreating || !canCreateCustomer}>
                 {isCreating ? (
                   <ActivityIndicator color={Colors.light.background} />
                 ) : (
@@ -1300,24 +1297,24 @@ export default function WalletScreen() {
           ) : (
             <>
               <View style={styles.buttonRow}>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.connectButton,
-                    pressed && styles.buttonPressed,
-                    isCreating && styles.buttonDisabled,
-                  ]}
-                  onPress={acceptOrder}
-                  disabled={isCreating || !canCreateOrder}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.connectButton,
+                pressed && styles.buttonPressed,
+                (isCreating || !canCourierAction) && styles.buttonDisabled,
+              ]}
+              onPress={acceptOrder}
+              disabled={isCreating || !canCourierAction}>
                   <ThemedText style={styles.buttonText}>Accept</ThemedText>
                 </Pressable>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.disconnectButton,
-                    pressed && styles.buttonPressed,
-                    isCreating && styles.buttonDisabled,
-                  ]}
-                  onPress={completeOrder}
-                  disabled={isCreating || !canCreateOrder}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.disconnectButton,
+                pressed && styles.buttonPressed,
+                (isCreating || !canCourierAction) && styles.buttonDisabled,
+              ]}
+              onPress={completeOrder}
+              disabled={isCreating || !canCourierAction}>
                   <ThemedText style={styles.buttonText}>Complete</ThemedText>
                 </Pressable>
               </View>
@@ -1446,7 +1443,8 @@ const styles = StyleSheet.create({
     opacity: 0.85,
   },
   buttonDisabled: {
-    opacity: 0.6,
+    opacity: 0.45,
+    transform: [{ scale: 0.98 }],
   },
   buttonText: {
     color: '#FFFFFF',
