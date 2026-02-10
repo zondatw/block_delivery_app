@@ -68,11 +68,14 @@ export default function WalletScreen() {
   const [rpcRaw, setRpcRaw] = useState<string | null>(null);
   const [isCheckingRpc, setIsCheckingRpc] = useState(false);
   const [amount, setAmount] = useState('1000');
+  const [orderAddress, setOrderAddress] = useState('');
   const [events, setEvents] = useState<any[]>([]);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createTx, setCreateTx] = useState<string | null>(null);
   const [lastOrderId, setLastOrderId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [courierError, setCourierError] = useState<string | null>(null);
+  const [courierTx, setCourierTx] = useState<string | null>(null);
   const [localKeypair, setLocalKeypair] = useState<Keypair | null>(null);
   const [localBalance, setLocalBalance] = useState<number | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -398,7 +401,7 @@ export default function WalletScreen() {
     if (!program || !programId) {
       return;
     }
-    if (Platform.OS === 'android') {
+    if (Platform.OS !== 'web') {
       return;
     }
 
@@ -743,6 +746,203 @@ export default function WalletScreen() {
     }
   };
 
+  const sendTxWithActiveWallet = async (tx: Transaction, feePayer: PublicKey) => {
+    const latest = await connection.getLatestBlockhash('confirmed');
+    tx.feePayer = feePayer;
+    tx.recentBlockhash = latest.blockhash;
+
+    if (activeWallet === 'local') {
+      tx.sign(localKeypair!);
+      const signature = await connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: false,
+      });
+      await confirmSignature(signature);
+      return signature;
+    }
+
+    if (activeWallet === 'phantom') {
+      if (Platform.OS === 'web') {
+        if (!phantomWebWallet) {
+          throw new Error('Phantom wallet not ready.');
+        }
+        if (typeof phantomWebWallet.signTransaction !== 'function') {
+          throw new Error('Phantom missing signTransaction.');
+        }
+        const signed = await phantomWebWallet.signTransaction(tx);
+        const raw = signed.serialize();
+        const signature = await connection.sendRawTransaction(raw, { skipPreflight: false });
+        await confirmSignature(signature);
+        return signature;
+      }
+
+      if (!phantomState.session || !phantomState.phantomEncryptionPublicKey) {
+        throw new Error('Missing Phantom session. Reconnect wallet.');
+      }
+      if (!phantomKeypairRef.current) {
+        throw new Error('Missing Phantom keypair.');
+      }
+      const { data, nonce, dappPublicKey } = encryptPayload(
+        {
+          session: phantomState.session,
+          transaction: tx.serialize({
+            requireAllSignatures: false,
+            verifySignatures: false,
+          }).toString('base64'),
+        },
+        phantomState.phantomEncryptionPublicKey,
+        phantomKeypairRef.current,
+      );
+      const params = new URLSearchParams({
+        app_url: DAPP_URL,
+        dapp_encryption_public_key: dappPublicKey,
+        redirect_link: PHANTOM_REDIRECT_LINK,
+        cluster: CLUSTER,
+        nonce,
+        data,
+      });
+      const url = `https://phantom.app/ul/v1/signAndSendTransaction?${params.toString()}`;
+      await Linking.openURL(url);
+      return phantomState.signature ?? null;
+    }
+
+    if (Platform.OS === 'web') {
+      if (!webWallet) {
+        throw new Error('Solflare wallet not ready.');
+      }
+      if (typeof webWallet.signTransaction !== 'function') {
+        throw new Error('Solflare SDK missing signTransaction; cannot use localnet.');
+      }
+      const signed = await webWallet.signTransaction(tx);
+      const raw = signed.serialize();
+      const signature = await connection.sendRawTransaction(raw, { skipPreflight: false });
+      await confirmSignature(signature);
+      return signature;
+    }
+
+    if (!state.session || !state.solflareEncryptionPublicKey) {
+      throw new Error('Missing Solflare session. Reconnect wallet.');
+    }
+    if (!keypairRef.current) {
+      throw new Error('Missing Solflare keypair.');
+    }
+    const { data, nonce, dappPublicKey } = encryptPayload(
+      {
+        session: state.session,
+        transaction: tx.serialize({
+          requireAllSignatures: false,
+          verifySignatures: false,
+        }).toString('base64'),
+      },
+      state.solflareEncryptionPublicKey,
+      keypairRef.current,
+    );
+    const params = new URLSearchParams({
+      app_url: DAPP_URL,
+      dapp_encryption_public_key: dappPublicKey,
+      redirect_link: REDIRECT_LINK,
+      cluster: CLUSTER,
+      nonce,
+      data,
+    });
+    const url = `https://solflare.com/ul/v1/signAndSendTransaction?${params.toString()}`;
+    await Linking.openURL(url);
+    return state.signature ?? null;
+  };
+
+  const acceptOrder = async () => {
+    if (!program || !programId) {
+      setCourierError('Program not ready.');
+      return;
+    }
+    if (!orderAddress) {
+      setCourierError('Enter order PDA.');
+      return;
+    }
+
+    const activeKey = activeWalletPublicKey;
+    if (activeWallet !== 'local' && !activeKey) {
+      setCourierError('Wallet not connected.');
+      return;
+    }
+    if (activeWallet === 'local' && !localKeypair) {
+      setCourierError('Local wallet not created.');
+      return;
+    }
+
+    setCourierError(null);
+    setCourierTx(null);
+    setIsCreating(true);
+
+    try {
+      const orderPubkey = new PublicKey(orderAddress);
+      const courierPubkey =
+        activeWallet === 'local' ? localKeypair!.publicKey : new PublicKey(activeKey!);
+      const tx = await program.methods
+        .acceptOrder()
+        .accounts({
+          order: orderPubkey,
+          courier: courierPubkey,
+        })
+        .transaction();
+
+      const signature = await sendTxWithActiveWallet(tx, courierPubkey);
+      if (signature) {
+        setCourierTx(signature);
+      }
+    } catch (err) {
+      setCourierError(err instanceof Error ? `Accept failed: ${err.message}` : 'Accept failed.');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const completeOrder = async () => {
+    if (!program || !programId) {
+      setCourierError('Program not ready.');
+      return;
+    }
+    if (!orderAddress) {
+      setCourierError('Enter order PDA.');
+      return;
+    }
+
+    const activeKey = activeWalletPublicKey;
+    if (activeWallet !== 'local' && !activeKey) {
+      setCourierError('Wallet not connected.');
+      return;
+    }
+    if (activeWallet === 'local' && !localKeypair) {
+      setCourierError('Local wallet not created.');
+      return;
+    }
+
+    setCourierError(null);
+    setCourierTx(null);
+    setIsCreating(true);
+
+    try {
+      const orderPubkey = new PublicKey(orderAddress);
+      const courierPubkey =
+        activeWallet === 'local' ? localKeypair!.publicKey : new PublicKey(activeKey!);
+      const tx = await program.methods
+        .completeOrder()
+        .accounts({
+          order: orderPubkey,
+          courier: courierPubkey,
+        })
+        .transaction();
+
+      const signature = await sendTxWithActiveWallet(tx, courierPubkey);
+      if (signature) {
+        setCourierTx(signature);
+      }
+    } catch (err) {
+      setCourierError(err instanceof Error ? `Complete failed: ${err.message}` : 'Complete failed.');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
   const statusText = useMemo(() => {
     const activeKey = activeWalletPublicKey;
     const activeError =
@@ -1064,10 +1264,50 @@ export default function WalletScreen() {
         </View>
 
         <View style={styles.card}>
+          <ThemedText type="defaultSemiBold">Courier</ThemedText>
+          <ThemedText style={styles.cardText}>
+            Active wallet: {activeWallet.charAt(0).toUpperCase() + activeWallet.slice(1)}
+          </ThemedText>
+          <TextInput
+            style={[styles.input, { color: palette.text, borderColor: palette.icon }]}
+            value={orderAddress}
+            onChangeText={setOrderAddress}
+            placeholder="Order PDA"
+            placeholderTextColor={palette.icon}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <View style={styles.buttonRow}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.connectButton,
+                pressed && styles.buttonPressed,
+                isCreating && styles.buttonDisabled,
+              ]}
+              onPress={acceptOrder}
+              disabled={isCreating || !canCreateOrder}>
+              <ThemedText style={styles.buttonText}>Accept</ThemedText>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [
+                styles.disconnectButton,
+                pressed && styles.buttonPressed,
+                isCreating && styles.buttonDisabled,
+              ]}
+              onPress={completeOrder}
+              disabled={isCreating || !canCreateOrder}>
+              <ThemedText style={styles.buttonText}>Complete</ThemedText>
+            </Pressable>
+          </View>
+          {courierTx ? <ThemedText style={styles.cardText}>Tx: {courierTx}</ThemedText> : null}
+          {courierError ? <ThemedText style={styles.cardText}>{courierError}</ThemedText> : null}
+        </View>
+
+        <View style={styles.card}>
           <ThemedText type="defaultSemiBold">Events</ThemedText>
-          {Platform.OS === 'android' ? (
+          {Platform.OS !== 'web' ? (
             <ThemedText style={styles.cardText}>
-              Event streaming is disabled on Android to avoid websocket errors.
+              Event streaming is disabled on mobile to avoid websocket errors.
             </ThemedText>
           ) : null}
           {events.length === 0 ? (
@@ -1140,6 +1380,11 @@ const styles = StyleSheet.create({
   },
   inputRow: {
     gap: 8,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 12,
+    flexWrap: 'wrap',
   },
   input: {
     borderWidth: 1,
