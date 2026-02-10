@@ -44,6 +44,11 @@ const SOLANA_RPC_URL = process.env.EXPO_PUBLIC_SOLANA_RPC_URL ?? 'http://127.0.0
 const REDIRECT_LINK = Linking.createURL('solflare-connect', { scheme: 'blockdeliveryapp' });
 const PHANTOM_REDIRECT_LINK = Linking.createURL('phantom-connect', { scheme: 'blockdeliveryapp' });
 const IDL = idlJson as Idl;
+const WALLET_SOLFLARE = 'solflare' as const;
+const WALLET_PHANTOM = 'phantom' as const;
+const WALLET_LOCAL = 'local' as const;
+const ROLE_CUSTOMER = 'customer' as const;
+const ROLE_COURIER = 'courier' as const;
 
 const shorten = (value: string) => `${value.slice(0, 4)}...${value.slice(-4)}`;
 const toSol = (lamports: number) => lamports / 1_000_000_000;
@@ -53,7 +58,9 @@ export default function WalletScreen() {
   const palette = Colors[colorScheme ?? 'light'];
   const [solflareState, setSolflareState] = useState(getSolflareState());
   const [phantomState, setPhantomState] = useState(getPhantomState());
-  const [activeWallet, setActiveWallet] = useState<'solflare' | 'phantom' | 'local'>('solflare');
+  const [activeWallet, setActiveWallet] = useState<
+    typeof WALLET_SOLFLARE | typeof WALLET_PHANTOM | typeof WALLET_LOCAL
+  >(WALLET_SOLFLARE);
   const [isLoading, setIsLoading] = useState(false);
   const [webWallet, setWebWallet] = useState<any>(null);
   const [webReady, setWebReady] = useState(false);
@@ -80,15 +87,17 @@ export default function WalletScreen() {
   const [localBalance, setLocalBalance] = useState<number | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [localBusy, setLocalBusy] = useState(false);
-  const [activeRole, setActiveRole] = useState<'customer' | 'courier'>('customer');
+  const [activeRole, setActiveRole] = useState<
+    typeof ROLE_CUSTOMER | typeof ROLE_COURIER
+  >(ROLE_CUSTOMER);
 
   const localConnection = useMemo(() => new Connection(SOLANA_RPC_URL, 'confirmed'), []);
 
   const activeWalletPublicKey = useMemo(() => {
-    if (activeWallet === 'local') {
+    if (activeWallet === WALLET_LOCAL) {
       return localKeypair?.publicKey.toBase58() ?? null;
     }
-    if (activeWallet === 'phantom') {
+    if (activeWallet === WALLET_PHANTOM) {
       return phantomState.publicKey ?? null;
     }
     return solflareState.publicKey ?? null;
@@ -146,7 +155,7 @@ export default function WalletScreen() {
 
   const createLocalWallet = () => {
     setLocalError(null);
-    setActiveWallet('local');
+    setActiveWallet(WALLET_LOCAL);
     setLocalKeypair(Keypair.generate());
   };
 
@@ -273,7 +282,7 @@ export default function WalletScreen() {
   }, [provider, programId]);
 
   useEffect(() => {
-    if (activeWallet === 'local') {
+    if (activeWallet === WALLET_LOCAL) {
       setBalance(null);
       setBalanceError(null);
       return;
@@ -439,7 +448,7 @@ export default function WalletScreen() {
   };
 
   const connect = async () => {
-    setActiveWallet('solflare');
+    setActiveWallet(WALLET_SOLFLARE);
     setSolflareState((prev) => ({ ...prev, error: null }));
     setCreateError(null);
 
@@ -485,7 +494,7 @@ export default function WalletScreen() {
   };
 
   const connectPhantom = async () => {
-    setActiveWallet('phantom');
+    setActiveWallet(WALLET_PHANTOM);
     setPhantomState((prev) => ({ ...prev, error: null }));
     setCreateError(null);
 
@@ -605,11 +614,11 @@ export default function WalletScreen() {
     }
 
     const activeKey = activeWalletPublicKey;
-    if (activeWallet !== 'local' && !activeKey) {
+    if (activeWallet !== WALLET_LOCAL && !activeKey) {
       setCreateError('Wallet not connected.');
       return;
     }
-    if (activeWallet === 'local' && !localKeypair) {
+    if (activeWallet === WALLET_LOCAL && !localKeypair) {
       setCreateError('Local wallet not created.');
       return;
     }
@@ -622,7 +631,7 @@ export default function WalletScreen() {
       const { orderPda, orderIdBN, counterPda } = await deriveOrderPda();
       const amountBN = new BN(amount);
       const customerPubkey =
-        activeWallet === 'local' ? localKeypair!.publicKey : new PublicKey(activeKey!);
+        activeWallet === WALLET_LOCAL ? localKeypair!.publicKey : new PublicKey(activeKey!);
 
       const tx = await program.methods
         .createOrder(amountBN)
@@ -638,14 +647,14 @@ export default function WalletScreen() {
       tx.feePayer = customerPubkey;
       tx.recentBlockhash = latest.blockhash;
 
-      if (activeWallet === 'local') {
+      if (activeWallet === WALLET_LOCAL) {
         tx.sign(localKeypair!);
         const signature = await connection.sendRawTransaction(tx.serialize(), {
           skipPreflight: false,
         });
         await confirmSignature(signature);
         setCreateTx(signature);
-      } else if (activeWallet === 'phantom') {
+      } else if (activeWallet === WALLET_PHANTOM) {
         if (Platform.OS === 'web') {
           if (!phantomWebWallet) {
             throw new Error('Phantom wallet not ready.');
@@ -752,7 +761,7 @@ export default function WalletScreen() {
     tx.feePayer = feePayer;
     tx.recentBlockhash = latest.blockhash;
 
-    if (activeWallet === 'local') {
+    if (activeWallet === WALLET_LOCAL) {
       tx.sign(localKeypair!);
       const signature = await connection.sendRawTransaction(tx.serialize(), {
         skipPreflight: false,
@@ -761,7 +770,7 @@ export default function WalletScreen() {
       return signature;
     }
 
-    if (activeWallet === 'phantom') {
+    if (activeWallet === WALLET_PHANTOM) {
       if (Platform.OS === 'web') {
         if (!phantomWebWallet) {
           throw new Error('Phantom wallet not ready.');
@@ -861,11 +870,11 @@ export default function WalletScreen() {
     }
 
     const activeKey = activeWalletPublicKey;
-    if (activeWallet !== 'local' && !activeKey) {
+    if (activeWallet !== WALLET_LOCAL && !activeKey) {
       setCourierError('Wallet not connected.');
       return;
     }
-    if (activeWallet === 'local' && !localKeypair) {
+    if (activeWallet === WALLET_LOCAL && !localKeypair) {
       setCourierError('Local wallet not created.');
       return;
     }
@@ -877,7 +886,7 @@ export default function WalletScreen() {
     try {
       const orderPubkey = new PublicKey(orderAddress);
       const courierPubkey =
-        activeWallet === 'local' ? localKeypair!.publicKey : new PublicKey(activeKey!);
+        activeWallet === WALLET_LOCAL ? localKeypair!.publicKey : new PublicKey(activeKey!);
       const tx = await program.methods
         .acceptOrder()
         .accounts({
@@ -908,11 +917,11 @@ export default function WalletScreen() {
     }
 
     const activeKey = activeWalletPublicKey;
-    if (activeWallet !== 'local' && !activeKey) {
+    if (activeWallet !== WALLET_LOCAL && !activeKey) {
       setCourierError('Wallet not connected.');
       return;
     }
-    if (activeWallet === 'local' && !localKeypair) {
+    if (activeWallet === WALLET_LOCAL && !localKeypair) {
       setCourierError('Local wallet not created.');
       return;
     }
@@ -924,7 +933,7 @@ export default function WalletScreen() {
     try {
       const orderPubkey = new PublicKey(orderAddress);
       const courierPubkey =
-        activeWallet === 'local' ? localKeypair!.publicKey : new PublicKey(activeKey!);
+        activeWallet === WALLET_LOCAL ? localKeypair!.publicKey : new PublicKey(activeKey!);
       const tx = await program.methods
         .completeOrder()
         .accounts({
@@ -947,7 +956,7 @@ export default function WalletScreen() {
   const statusText = useMemo(() => {
     const activeKey = activeWalletPublicKey;
     const activeError =
-      activeWallet === 'phantom' ? phantomState.error : activeWallet === 'local' ? localError : solflareState.error;
+      activeWallet === WALLET_PHANTOM ? phantomState.error : activeWallet === WALLET_LOCAL ? localError : solflareState.error;
     if (activeError) return `Error: ${activeError}`;
     if (activeKey) return `Wallet: ${shorten(activeKey)}`;
     return 'Wallet: Not connected';
@@ -957,9 +966,9 @@ export default function WalletScreen() {
   const isPhantomConnected = Boolean(phantomState.publicKey);
   const isLocalConnected = Boolean(localKeypair);
   const canCreateOrder =
-    activeWallet === 'local'
+    activeWallet === WALLET_LOCAL
       ? isLocalConnected
-      : activeWallet === 'phantom'
+      : activeWallet === WALLET_PHANTOM
         ? isPhantomConnected
         : isConnected;
   const canCreateCustomer =
@@ -986,13 +995,13 @@ export default function WalletScreen() {
             <Pressable
               style={[
                 styles.switchButton,
-                activeWallet === 'solflare' && styles.switchButtonActive,
+                activeWallet === WALLET_SOLFLARE && styles.switchButtonActive,
               ]}
-              onPress={() => setActiveWallet('solflare')}>
+              onPress={() => setActiveWallet(WALLET_SOLFLARE)}>
               <ThemedText
                 style={[
                   styles.switchText,
-                  activeWallet === 'solflare' ? styles.switchTextActive : styles.switchTextInactive,
+                  activeWallet === WALLET_SOLFLARE ? styles.switchTextActive : styles.switchTextInactive,
                 ]}>
                 Solflare
               </ThemedText>
@@ -1000,13 +1009,13 @@ export default function WalletScreen() {
             <Pressable
               style={[
                 styles.switchButton,
-                activeWallet === 'phantom' && styles.switchButtonActive,
+                activeWallet === WALLET_PHANTOM && styles.switchButtonActive,
               ]}
-              onPress={() => setActiveWallet('phantom')}>
+              onPress={() => setActiveWallet(WALLET_PHANTOM)}>
               <ThemedText
                 style={[
                   styles.switchText,
-                  activeWallet === 'phantom' ? styles.switchTextActive : styles.switchTextInactive,
+                  activeWallet === WALLET_PHANTOM ? styles.switchTextActive : styles.switchTextInactive,
                 ]}>
                 Phantom
               </ThemedText>
@@ -1014,13 +1023,13 @@ export default function WalletScreen() {
             <Pressable
               style={[
                 styles.switchButton,
-                activeWallet === 'local' && styles.switchButtonActive,
+                activeWallet === WALLET_LOCAL && styles.switchButtonActive,
               ]}
-              onPress={() => setActiveWallet('local')}>
+              onPress={() => setActiveWallet(WALLET_LOCAL)}>
               <ThemedText
                 style={[
                   styles.switchText,
-                  activeWallet === 'local' ? styles.switchTextActive : styles.switchTextInactive,
+                  activeWallet === WALLET_LOCAL ? styles.switchTextActive : styles.switchTextInactive,
                 ]}>
                 Local
               </ThemedText>
@@ -1029,7 +1038,7 @@ export default function WalletScreen() {
           <ThemedText style={styles.cardText}>
             Using: {activeWallet.charAt(0).toUpperCase() + activeWallet.slice(1)}
           </ThemedText>
-          {activeWallet === 'solflare' ? (
+          {activeWallet === WALLET_SOLFLARE ? (
             isConnected ? (
               <Pressable
                 style={({ pressed }) => [styles.disconnectButton, pressed && styles.buttonPressed]}
@@ -1056,7 +1065,7 @@ export default function WalletScreen() {
               </Pressable>
             )
           ) : null}
-          {activeWallet === 'phantom' ? (
+          {activeWallet === WALLET_PHANTOM ? (
             isPhantomConnected ? (
               <Pressable
                 style={({ pressed }) => [styles.disconnectButton, pressed && styles.buttonPressed]}
@@ -1083,7 +1092,7 @@ export default function WalletScreen() {
               </Pressable>
             )
           ) : null}
-          {activeWallet === 'local' ? (
+          {activeWallet === WALLET_LOCAL ? (
             <>
               <ThemedText style={styles.cardText}>RPC: {SOLANA_RPC_URL}</ThemedText>
               <ThemedText style={styles.cardText}>
@@ -1136,11 +1145,11 @@ export default function WalletScreen() {
           <ThemedText type="defaultSemiBold">Status</ThemedText>
           <ThemedText style={styles.cardText}>
             Connection:{' '}
-            {activeWallet === 'local'
+            {activeWallet === WALLET_LOCAL
               ? isLocalConnected
                 ? 'Connected'
                 : 'Not connected'
-              : activeWallet === 'phantom'
+              : activeWallet === WALLET_PHANTOM
                 ? isPhantomConnected
                   ? 'Connected'
                   : 'Not connected'
@@ -1152,7 +1161,7 @@ export default function WalletScreen() {
           <ThemedText style={styles.cardText}>Network: Solana {CLUSTER}</ThemedText>
           <ThemedText style={styles.cardText}>
             Balance:{' '}
-            {activeWallet === 'local'
+            {activeWallet === WALLET_LOCAL
               ? localBalance === null
                 ? '—'
                 : `${localBalance.toFixed(4)} SOL`
@@ -1160,7 +1169,7 @@ export default function WalletScreen() {
                 ? '—'
                 : `${balance.toFixed(4)} SOL`}
           </ThemedText>
-          {activeWallet !== 'local' && balanceError ? (
+          {activeWallet !== WALLET_LOCAL && balanceError ? (
             <ThemedText style={styles.cardText}>{balanceError}</ThemedText>
           ) : null}
           {Platform.OS === 'web' && !webReady ? (
@@ -1169,10 +1178,10 @@ export default function WalletScreen() {
           {solflareState.lastUrl ? (
             <ThemedText style={styles.cardText}>Last URL: {solflareState.lastUrl}</ThemedText>
           ) : null}
-          {activeWallet === 'solflare' && solflareState.signature ? (
+          {activeWallet === WALLET_SOLFLARE && solflareState.signature ? (
             <ThemedText style={styles.cardText}>Last Signature: {solflareState.signature}</ThemedText>
           ) : null}
-          {activeWallet === 'phantom' && phantomState.signature ? (
+          {activeWallet === WALLET_PHANTOM && phantomState.signature ? (
             <ThemedText style={styles.cardText}>
               Last Signature: {phantomState.signature}
             </ThemedText>
@@ -1213,13 +1222,13 @@ export default function WalletScreen() {
             <Pressable
               style={[
                 styles.switchButton,
-                activeRole === 'customer' && styles.switchButtonActive,
+                activeRole === ROLE_CUSTOMER && styles.switchButtonActive,
               ]}
-              onPress={() => setActiveRole('customer')}>
+              onPress={() => setActiveRole(ROLE_CUSTOMER)}>
               <ThemedText
                 style={[
                   styles.switchText,
-                  activeRole === 'customer' ? styles.switchTextActive : styles.switchTextInactive,
+                  activeRole === ROLE_CUSTOMER ? styles.switchTextActive : styles.switchTextInactive,
                 ]}>
                 Customer
               </ThemedText>
@@ -1227,13 +1236,13 @@ export default function WalletScreen() {
             <Pressable
               style={[
                 styles.switchButton,
-                activeRole === 'courier' && styles.switchButtonActive,
+                activeRole === ROLE_COURIER && styles.switchButtonActive,
               ]}
-              onPress={() => setActiveRole('courier')}>
+              onPress={() => setActiveRole(ROLE_COURIER)}>
               <ThemedText
                 style={[
                   styles.switchText,
-                  activeRole === 'courier' ? styles.switchTextActive : styles.switchTextInactive,
+                  activeRole === ROLE_COURIER ? styles.switchTextActive : styles.switchTextInactive,
                 ]}>
                 Courier
               </ThemedText>
@@ -1247,7 +1256,7 @@ export default function WalletScreen() {
               Program ID missing. Replace `assets/idl/block_delivery.json` with your IDL.
             </ThemedText>
           ) : null}
-          {activeRole === 'customer' ? (
+          {activeRole === ROLE_CUSTOMER ? (
             <View style={styles.inputRow}>
               <ThemedText style={styles.cardText}>Amount</ThemedText>
               <TextInput
@@ -1270,7 +1279,7 @@ export default function WalletScreen() {
               autoCorrect={false}
             />
           )}
-          {activeRole === 'customer' ? (
+          {activeRole === ROLE_CUSTOMER ? (
             <>
           <Pressable
             style={({ pressed }) => [
