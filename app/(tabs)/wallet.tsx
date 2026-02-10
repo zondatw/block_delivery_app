@@ -1405,9 +1405,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   buttonRow: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     gap: 12,
-    flexWrap: 'wrap',
+    alignItems: 'stretch',
   },
   input: {
     borderWidth: 1,
