@@ -17,6 +17,8 @@ const MAPPING = {
   'house.fill': 'home',
   'paperplane.fill': 'send',
   'wallet.pass.fill': 'account-balance-wallet',
+  'person.fill': 'person',
+  'car.fill': 'local-shipping',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
 } as IconMapping;
